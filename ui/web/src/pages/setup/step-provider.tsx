@@ -47,6 +47,7 @@ export function StepProvider({ onComplete, existingProvider }: StepProviderProps
   const isCLI = providerType === "claude_cli";
   // Local Ollama uses no API key — the server accepts any non-empty Bearer value internally
   const isOllama = providerType === "ollama";
+  const isVLLM = providerType === "vllm";
 
   const handleTypeChange = (value: string) => {
     setProviderType(value);
@@ -97,7 +98,7 @@ export function StepProvider({ onComplete, existingProvider }: StepProviderProps
 
   const handleSubmit = async () => {
     if (isOAuth) return;
-    if (!isEditing && !isCLI && !isOllama && !apiKey.trim()) { setError(t("provider.errors.apiKeyRequired")); return; }
+    if (!isEditing && !isCLI && !isOllama && !isVLLM && !apiKey.trim()) { setError(t("provider.errors.apiKeyRequired")); return; }
     setLoading(true);
     setError("");
     try {
@@ -116,7 +117,7 @@ export function StepProvider({ onComplete, existingProvider }: StepProviderProps
           name: name.trim(),
           provider_type: providerType,
           api_base: apiBase.trim() || undefined,
-          api_key: isCLI || isOllama || isOAuth ? undefined : apiKey.trim(),
+          api_key: isCLI || isOllama || isOAuth ? undefined : (isVLLM ? (apiKey.trim() || undefined) : apiKey.trim()),
           enabled: true,
         }) as ProviderData;
         onComplete(provider);
@@ -228,7 +229,7 @@ export function StepProvider({ onComplete, existingProvider }: StepProviderProps
 
           {!isOAuth && (
             <div className="flex justify-end">
-              <Button onClick={handleSubmit} disabled={loading || (!isEditing && !isCLI && !isOllama && !apiKey.trim())}>
+              <Button onClick={handleSubmit} disabled={loading || (!isEditing && !isCLI && !isOllama && !isVLLM && !apiKey.trim())}>
                 {loading
                   ? isEditing ? t("provider.updating", "Updating...") : t("provider.creating")
                   : isEditing ? t("provider.update", "Update") : t("provider.create")}

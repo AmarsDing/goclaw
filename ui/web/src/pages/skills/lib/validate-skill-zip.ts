@@ -1,9 +1,12 @@
 /** Client-side validation for skill ZIP files before upload.
- * Mirrors server-side checks in internal/http/skills_upload.go */
+ * Mirrors server-side checks in internal/http/skills_upload.go and skills_upload_layout.go */
 import JSZip from "jszip";
 
 export interface SkillZipValidation {
   valid: boolean;
+  /** true when ZIP contains multiple top-level skill folders */
+  multi?: boolean;
+  skillCount?: number;
   name?: string;
   slug?: string;
   description?: string;
@@ -12,10 +15,33 @@ export interface SkillZipValidation {
   errorDetail?: string;
 }
 
-// Constants matching server-side (internal/http/skills.go)
 const MAX_SKILL_SIZE = 20 * 1024 * 1024; // 20MB
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
+
+function normalizeZipPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function zipBasename(p: string): string {
+  const parts = normalizeZipPath(p).split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+type SkillEntry = { path: string; parts: string[] };
+
+function collectSkillEntries(zip: JSZip): SkillEntry[] {
+  const out: SkillEntry[] = [];
+  for (const key of Object.keys(zip.files)) {
+    const f = zip.files[key];
+    if (!f || f.dir) continue;
+    const n = normalizeZipPath(key);
+    if (zipBasename(n) !== "SKILL.md") continue;
+    const parts = n.split("/").filter((s) => s.length > 0);
+    out.push({ path: n, parts });
+  }
+  return out;
+}
 
 /** Validate a skill ZIP file client-side. JSZip is lazy-loaded. */
 export async function validateSkillZip(file: File): Promise<SkillZipValidation> {
@@ -33,16 +59,63 @@ export async function validateSkillZip(file: File): Promise<SkillZipValidation> 
     return { valid: false, error: "upload.invalidZip" };
   }
 
-  // Find SKILL.md at root or inside single top-level directory
-  const skillMdContent = await findSkillMd(zip);
-  if (skillMdContent === null) {
+  const entries = collectSkillEntries(zip);
+  if (entries.some((e) => e.parts.length > 3)) {
+    return { valid: false, error: "upload.skillMdTooDeep" };
+  }
+  if (entries.length === 0) {
     return { valid: false, error: "upload.noSkillMd" };
   }
+
+  const rootSkill = entries.find((e) => e.parts.length === 1 && e.parts[0] === "SKILL.md");
+  if (rootSkill) {
+    if (entries.length > 1) {
+      return { valid: false, error: "upload.layoutMixedRoot" };
+    }
+    return validateSingleSkillMd(zip, "SKILL.md");
+  }
+
+  const depth2 = entries.filter((e) => e.parts.length === 2 && e.parts[1] === "SKILL.md");
+  const depth3 = entries.filter((e) => e.parts.length === 3 && e.parts[2] === "SKILL.md");
+  if (depth2.length > 0 && depth3.length > 0) {
+    return { valid: false, error: "upload.layoutMixedDepth" };
+  }
+
+  if (depth2.length > 0) {
+    const dirs = [...new Set(depth2.map((e) => e.parts[0]))].sort();
+    const roots = dirs.map((d) => `${d}/SKILL.md`);
+    if (dirs.length >= 2) {
+      return validateMultiBundle(zip, roots);
+    }
+    return validateSingleSkillMd(zip, roots[0]!);
+  }
+
+  if (depth3.length === 0) {
+    return { valid: false, error: "upload.noSkillMd" };
+  }
+
+  const wraps = [...new Set(depth3.map((e) => e.parts[0]))];
+  if (wraps.length > 1) {
+    return { valid: false, error: "upload.layoutMultipleWrappers" };
+  }
+  const w = wraps[0]!;
+  const children = [...new Set(depth3.filter((e) => e.parts[0] === w).map((e) => e.parts[1]))].sort();
+  const roots = children.map((c) => `${w}/${c}/SKILL.md`);
+  if (children.length >= 2) {
+    return validateMultiBundle(zip, roots);
+  }
+  return validateSingleSkillMd(zip, roots[0]!);
+}
+
+async function validateSingleSkillMd(zip: JSZip, key: string): Promise<SkillZipValidation> {
+  const f = zip.files[key];
+  if (!f || f.dir) {
+    return { valid: false, error: "upload.noSkillMd" };
+  }
+  const skillMdContent = await f.async("string");
   if (!skillMdContent.trim()) {
     return { valid: false, error: "upload.emptySkillMd" };
   }
-
-  // Parse frontmatter
   const match = skillMdContent.match(FRONTMATTER_REGEX);
   if (!match?.[1]) {
     return { valid: false, error: "upload.noFrontmatter" };
@@ -51,34 +124,40 @@ export async function validateSkillZip(file: File): Promise<SkillZipValidation> 
   if (!fields.name) {
     return { valid: false, error: "upload.nameRequired" };
   }
-
   const slug = fields.slug || slugify(fields.name);
   if (!SLUG_REGEX.test(slug)) {
     return { valid: false, error: "upload.invalidSlug", errorDetail: slug };
   }
-
-  return { valid: true, name: fields.name, slug, description: fields.description };
+  return {
+    valid: true,
+    name: fields.name,
+    slug,
+    description: fields.description,
+  };
 }
 
-/** Find SKILL.md content — root level or inside a single top-level directory */
-async function findSkillMd(zip: JSZip): Promise<string | null> {
-  // Try root
-  if (zip.files["SKILL.md"] && !zip.files["SKILL.md"].dir) {
-    return zip.files["SKILL.md"].async("string");
-  }
-  // Try single top-level dir (e.g. "my-skill/SKILL.md")
-  const paths = Object.keys(zip.files);
-  const topDirs = new Set(paths.map((p) => p.split("/")[0]).filter(Boolean));
-  for (const dir of topDirs) {
-    const key = dir + "/SKILL.md";
-    if (zip.files[key] && !zip.files[key].dir) {
-      return zip.files[key].async("string");
+async function validateMultiBundle(zip: JSZip, skillPaths: string[]): Promise<SkillZipValidation> {
+  const seen = new Set<string>();
+  let firstName: string | undefined;
+  for (const key of skillPaths) {
+    const v = await validateSingleSkillMd(zip, key);
+    if (!v.valid || !v.slug) {
+      return v;
     }
+    if (seen.has(v.slug)) {
+      return { valid: false, error: "upload.duplicateSlugInBundle", errorDetail: v.slug };
+    }
+    seen.add(v.slug);
+    if (!firstName) firstName = v.name;
   }
-  return null;
+  return {
+    valid: true,
+    multi: true,
+    skillCount: skillPaths.length,
+    name: firstName,
+  };
 }
 
-/** Simple key: value parser matching server's parseSkillFrontmatter() */
 function parseFrontmatterFields(raw: string): Record<string, string> {
   const fields: Record<string, string> = {};
   for (const line of raw.split(/\r?\n/)) {

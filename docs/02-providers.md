@@ -761,3 +761,4 @@ GoClaw v3 Wave 2 adds composable request middleware, error classification, per-m
 |----------|-----------------|
 | [12-extended-thinking.md](./12-extended-thinking.md) | Full extended thinking documentation |
 | [01-agent-loop.md](./01-agent-loop.md) | LLM iteration loop, streaming chunk handling |
+| [vllm/README.md](./vllm/README.md) | Optional self-hosted vLLM launch examples and GoClaw wiring |

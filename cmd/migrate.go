@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -38,9 +41,34 @@ func resolveMigrationsDir() string {
 	return filepath.Join(filepath.Dir(exe), "migrations")
 }
 
+// migrationsFileURL builds a file:// URI golang-migrate's file driver can open.
+// - Raw "file://F:\path" fails net/url parse (drive letter looks like a host:port).
+// - "file:///F:/path" parses to path "/F:/..." which os.DirFS rejects on Windows.
+// - "file://F:/path" yields Host "F:" + Path "/rest" → "F:/path/..." which filepath.Abs fixes up.
+func migrationsFileURL(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	p := filepath.ToSlash(abs)
+	if runtime.GOOS == "windows" && len(p) >= 2 && p[1] == ':' {
+		return "file://" + p, nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	return u.String(), nil
+}
+
 func newMigrator(dsn string) (*migrate.Migrate, error) {
 	dir := resolveMigrationsDir()
-	m, err := migrate.New("file://"+dir, dsn)
+	src, err := migrationsFileURL(dir)
+	if err != nil {
+		return nil, fmt.Errorf("migrations path: %w", err)
+	}
+	m, err := migrate.New(src, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("create migrator: %w", err)
 	}

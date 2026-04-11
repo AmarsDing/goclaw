@@ -187,3 +187,111 @@ func TestProvidersHandlerUpdateRejectsIncompatibleEmbeddingDimensions(t *testing
 		t.Fatalf("embedding dimensions = %+v, want 1536 preserved", es)
 	}
 }
+
+func TestProvidersHandlerRegisterInMemoryVLLMPrivateBase(t *testing.T) {
+	providerReg := providers.NewRegistry(nil)
+	handler := NewProvidersHandler(newMockProviderStore(), newMockSecretsStore(), providerReg, "")
+
+	tenantID := uuid.New()
+	p := &store.LLMProviderData{
+		BaseModel:    store.BaseModel{ID: uuid.New()},
+		TenantID:     tenantID,
+		Name:         "local-vllm",
+		ProviderType: store.ProviderVLLM,
+		APIBase:      "http://192.168.4.79:8000",
+		APIKey:       "",
+		Enabled:      true,
+	}
+
+	handler.registerInMemory(p)
+
+	runtimeProvider, err := providerReg.GetForTenant(tenantID, "local-vllm")
+	if err != nil {
+		t.Fatalf("GetForTenant() error = %v", err)
+	}
+	oai, ok := runtimeProvider.(*providers.OpenAIProvider)
+	if !ok {
+		t.Fatalf("runtime provider = %T, want *providers.OpenAIProvider", runtimeProvider)
+	}
+	if oai.ProviderType() != store.ProviderVLLM {
+		t.Fatalf("ProviderType() = %q, want %q", oai.ProviderType(), store.ProviderVLLM)
+	}
+	if oai.APIKey() != "-" {
+		t.Fatalf("APIKey() = %q, want placeholder %q", oai.APIKey(), "-")
+	}
+	wantBase := "http://192.168.4.79:8000/v1"
+	if oai.APIBase() != wantBase {
+		t.Fatalf("APIBase() = %q, want %q", oai.APIBase(), wantBase)
+	}
+}
+
+func TestProvidersHandlerCreateVLLMPrivateBaseNoKey(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	providerStore := newMockProviderStore()
+	providerReg := providers.NewRegistry(nil)
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), providerReg, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := `{
+		"name": "vllm-lan",
+		"provider_type": "vllm",
+		"api_base": "http://10.0.0.5:8000",
+		"enabled": true
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/providers", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status code = %d, want %d, body=%s", w.Code, http.StatusCreated, w.Body.String())
+	}
+	if len(providerStore.providers) != 1 {
+		t.Fatalf("provider count = %d, want 1", len(providerStore.providers))
+	}
+	var created store.LLMProviderData
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	runtimeProvider, err := providerReg.GetForTenant(created.TenantID, "vllm-lan")
+	if err != nil {
+		t.Fatalf("GetForTenant() error = %v", err)
+	}
+	oai, ok := runtimeProvider.(*providers.OpenAIProvider)
+	if !ok {
+		t.Fatalf("runtime provider = %T, want *providers.OpenAIProvider", runtimeProvider)
+	}
+	if oai.APIBase() != "http://10.0.0.5:8000/v1" {
+		t.Fatalf("APIBase() = %q", oai.APIBase())
+	}
+}
+
+func TestProvidersHandlerCreateOpenRouterRejectsPrivateBase(t *testing.T) {
+	token := setupProvidersAdminToken(t)
+	providerStore := newMockProviderStore()
+	handler := NewProvidersHandler(providerStore, newMockSecretsStore(), nil, "")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := `{
+		"name": "or-private",
+		"provider_type": "openrouter",
+		"api_base": "https://192.168.1.1/v1",
+		"api_key": "sk-test",
+		"enabled": true
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/providers", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d, body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if len(providerStore.providers) != 0 {
+		t.Fatalf("provider store should be empty on reject, got %d", len(providerStore.providers))
+	}
+}

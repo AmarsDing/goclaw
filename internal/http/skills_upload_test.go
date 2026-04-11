@@ -212,6 +212,73 @@ func TestHandleUpload_AutoInstallsMissingDepsAndKeepsSkillActive(t *testing.T) {
 	}
 }
 
+func TestHandleUpload_MultiBundleTwoTopLevelDirs(t *testing.T) {
+	handler, skillStore, ctx, _ := newTestUploadHandler(t)
+	stubUploadDepFns(t,
+		func(context.Context, *skills.SkillManifest, []string) (*skills.InstallResult, error) {
+			return nil, nil
+		},
+		func(*skills.SkillManifest) (bool, []string) { return true, nil },
+	)
+
+	req := newZipUploadRequest(t, ctx, map[string]string{
+		"a/SKILL.md":       skillMarkdown("Skill A", "skill-a"),
+		"b/SKILL.md":       skillMarkdown("Skill B", "skill-b"),
+		"b/scripts/x.txt": "x",
+	})
+	w := httptest.NewRecorder()
+	handler.handleUpload(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["multi"] != true {
+		t.Fatalf("expected multi=true, got %#v", resp["multi"])
+	}
+	skillsArr, ok := resp["skills"].([]any)
+	if !ok || len(skillsArr) != 2 {
+		t.Fatalf("skills = %#v", resp["skills"])
+	}
+	if len(skillStore.ListAllSkills(ctx)) != 2 {
+		t.Fatalf("expected 2 skills in store, got %d", len(skillStore.ListAllSkills(ctx)))
+	}
+}
+
+func TestHandleUpload_MultiBundleWrapperDir(t *testing.T) {
+	handler, skillStore, ctx, _ := newTestUploadHandler(t)
+	stubUploadDepFns(t,
+		func(context.Context, *skills.SkillManifest, []string) (*skills.InstallResult, error) {
+			return nil, nil
+		},
+		func(*skills.SkillManifest) (bool, []string) { return true, nil },
+	)
+
+	req := newZipUploadRequest(t, ctx, map[string]string{
+		"skills/foo/SKILL.md": skillMarkdown("Foo", "skill-foo"),
+		"skills/bar/SKILL.md": skillMarkdown("Bar", "skill-bar"),
+	})
+	w := httptest.NewRecorder()
+	handler.handleUpload(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["multi"] != true {
+		t.Fatal("expected multi=true")
+	}
+	if len(skillStore.ListAllSkills(ctx)) != 2 {
+		t.Fatalf("expected 2 skills in store")
+	}
+}
+
 func TestHandleUpload_UninstallableDepArchivesSkillWithErrors(t *testing.T) {
 	handler, skillStore, ctx, _ := newTestUploadHandler(t)
 	installCalls := 0

@@ -15,8 +15,8 @@ import (
 
 // ModelInfo is a normalized model entry returned by the list-models endpoint.
 type ModelInfo struct {
-	ID        string                        `json:"id"`
-	Name      string                        `json:"name,omitempty"`
+	ID        string                         `json:"id"`
+	Name      string                         `json:"name,omitempty"`
 	Reasoning *providers.ReasoningCapability `json:"reasoning,omitempty"`
 }
 
@@ -86,7 +86,7 @@ func (h *ProvidersHandler) handleListProviderModels(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if p.APIKey == "" {
+	if strings.TrimSpace(p.APIKey) == "" && !allowEmptyAPIKeyForProviderList(p) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "API key")})
 		return
 	}
@@ -111,11 +111,9 @@ func (h *ProvidersHandler) handleListProviderModels(w http.ResponseWriter, r *ht
 		models = sunoModels()
 	default:
 		// All other types use OpenAI-compatible /models endpoint
-		apiBase := strings.TrimRight(h.resolveAPIBase(p), "/")
-		if apiBase == "" {
-			apiBase = "https://api.openai.com/v1"
-		}
-		models, err = fetchOpenAIModels(ctx, apiBase, p.APIKey)
+		apiBase := openAICompatModelsAPIBase(h, p)
+		key := openAIBearerForModels(p)
+		models, err = fetchOpenAIModels(ctx, apiBase, key)
 	}
 
 	if err != nil {

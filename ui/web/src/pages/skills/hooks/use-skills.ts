@@ -11,7 +11,7 @@ import type { SkillInfo, SkillFile, SkillVersions } from "@/types/skill";
 
 export type { SkillInfo, SkillFile, SkillVersions };
 
-export type SkillUploadResponse = {
+export type SingleSkillUploadResponse = {
   id: string;
   slug: string;
   version: number;
@@ -22,6 +22,15 @@ export type SkillUploadResponse = {
   missing_deps?: string[];
   deps_installed?: boolean;
 };
+
+/** POST /v1/skills/upload — single skill, or multi when ZIP contains several skill folders */
+export type MultiSkillUploadResponse = {
+  multi: true;
+  skills: SingleSkillUploadResponse[];
+  failed?: { slug: string; error: string }[];
+};
+
+export type SkillUploadResponse = SingleSkillUploadResponse | MultiSkillUploadResponse;
 
 export function useSkills() {
   const ws = useWs();

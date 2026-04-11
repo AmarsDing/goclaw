@@ -29,6 +29,7 @@ const (
 	ProviderZai             = "zai"
 	ProviderZaiCoding       = "zai_coding"
 	ProviderOllama          = "ollama"       // local or self-hosted Ollama (no API key)
+	ProviderVLLM            = "vllm"         // local or self-hosted vLLM OpenAI server (optional API key)
 	ProviderOllamaCloud     = "ollama_cloud" // Ollama Cloud (Bearer token required)
 	ProviderACP             = "acp"          // ACP (Agent Client Protocol) agent subprocess
 	ProviderNovita          = "novita"          // Novita AI (OpenAI-compatible endpoint)
@@ -67,6 +68,7 @@ var ValidProviderTypes = map[string]bool{
 	ProviderZai:             true,
 	ProviderZaiCoding:       true,
 	ProviderOllama:          true,
+	ProviderVLLM:            true,
 	ProviderOllamaCloud:     true,
 	ProviderACP:             true,
 	ProviderNovita:          true,

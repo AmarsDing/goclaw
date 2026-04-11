@@ -21,6 +21,7 @@ app
 browser-poc
 openclaw-go
 goclaw
+goclaw.exe
 /config.json
 prompt.md
 *.bk.*

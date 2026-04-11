@@ -12,7 +12,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { validateSkillZip } from "./lib/validate-skill-zip";
 import { uniqueId } from "@/lib/utils";
-import type { SkillUploadResponse } from "./hooks/use-skills";
+import type { MultiSkillUploadResponse, SkillUploadResponse } from "./hooks/use-skills";
+
+function isMultiUpload(r: SkillUploadResponse): r is MultiSkillUploadResponse {
+  return "multi" in r && r.multi === true;
+}
 
 type FileStatus = "validating" | "valid" | "invalid" | "uploading" | "success" | "warning" | "error";
 
@@ -22,6 +26,9 @@ interface FileEntry {
   status: FileStatus;
   name?: string;
   slug?: string;
+  /** ZIP bundle with multiple skill folders */
+  multi?: boolean;
+  skillCount?: number;
   error?: string;
 }
 
@@ -72,8 +79,10 @@ export function SkillUploadDialog({ open, onOpenChange, onUpload }: SkillUploadD
         return {
           ...e,
           status: result.valid ? "valid" : "invalid",
-          name: "name" in result ? result.name : undefined,
-          slug: "slug" in result ? result.slug : undefined,
+          name: "name" in result && result.valid ? result.name : undefined,
+          slug: "slug" in result && result.valid ? result.slug : undefined,
+          multi: result.valid && result.multi ? true : undefined,
+          skillCount: result.valid && result.multi ? result.skillCount : undefined,
           error: result.error,
         };
       }),
@@ -95,18 +104,36 @@ export function SkillUploadDialog({ open, onOpenChange, onUpload }: SkillUploadD
       );
       try {
         const result = await onUpload(entry.file);
-        const detail = result.deps_warning
-          ? result.deps_errors?.length
-            ? `${result.deps_warning}: ${result.deps_errors.join("; ")}`
-            : result.deps_warning
-          : undefined;
-        setEntries((prev) =>
-          prev.map((e) => (e.id === entry.id ? {
-            ...e,
-            status: result.deps_warning ? "warning" : "success",
-            error: detail,
-          } : e)),
-        );
+        if (isMultiUpload(result)) {
+          const ok = result.skills.length;
+          const failedN = result.failed?.length ?? 0;
+          const detail =
+            failedN > 0 ? t("upload.multiPartialDetail", { ok, failed: failedN }) : undefined;
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.id === entry.id
+                ? {
+                    ...e,
+                    status: failedN > 0 && ok === 0 ? "error" : failedN > 0 ? "warning" : "success",
+                    error: detail,
+                  }
+                : e,
+            ),
+          );
+        } else {
+          const detail = result.deps_warning
+            ? result.deps_errors?.length
+              ? `${result.deps_warning}: ${result.deps_errors.join("; ")}`
+              : result.deps_warning
+            : undefined;
+          setEntries((prev) =>
+            prev.map((e) => (e.id === entry.id ? {
+              ...e,
+              status: result.deps_warning ? "warning" : "success",
+              error: detail,
+            } : e)),
+          );
+        }
       } catch (err) {
         setEntries((prev) =>
           prev.map((e) =>
@@ -252,7 +279,9 @@ function FileEntryRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium">
-            {entry.name || entry.file.name}
+            {entry.multi && entry.skillCount
+              ? t("upload.multiBundleLabel", { count: entry.skillCount })
+              : entry.name || entry.file.name}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{sizeKB} KB</span>
         </div>

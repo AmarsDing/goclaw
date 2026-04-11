@@ -323,6 +323,18 @@ func registerProvidersFromDB(registry *providers.Registry, provStore store.Provi
 			slog.Info("registered provider from DB", "name", p.Name)
 			continue
 		}
+		if p.ProviderType == store.ProviderVLLM {
+			base := config.ResolveVLLMOpenAIBase(p.APIBase)
+			key := p.APIKey
+			if key == "" {
+				key = "-"
+			}
+			prov := providers.NewOpenAIProvider(p.Name, key, base, "")
+			prov.WithProviderType(store.ProviderVLLM)
+			registry.RegisterForTenant(p.TenantID, prov)
+			slog.Info("registered provider from DB", "name", p.Name)
+			continue
+		}
 
 		if p.APIKey == "" {
 			continue

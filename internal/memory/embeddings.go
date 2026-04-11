@@ -163,7 +163,8 @@ func NewOpenAIEmbeddingProvider(name, apiKey, apiURL, model string) *OpenAIEmbed
 	}
 }
 
-// WithDimensions sets the output dimensions for models that support dimension truncation.
+// WithDimensions sets the output dimensions for APIs that support the OpenAI `dimensions` field
+// (e.g. text-embedding-3). Do not use for vLLM unless the served model is Matryoshka (variable dims).
 func (p *OpenAIEmbeddingProvider) WithDimensions(d int) *OpenAIEmbeddingProvider {
 	p.dimensions = d
 	return p
@@ -221,6 +222,55 @@ func (p *OpenAIEmbeddingProvider) Embed(ctx context.Context, texts []string) ([]
 	}
 
 	return embeddings, nil
+}
+
+// ClampEmbeddingDims truncates or zero-pads v to exactly dim elements for fixed-size pgvector
+// columns (e.g. vector(1536)). Longer model outputs (e.g. 2048-dim Gemma) keep the leading dims;
+// shorter outputs are padded with zeros.
+func ClampEmbeddingDims(v []float32, dim int) []float32 {
+	if dim <= 0 {
+		return nil
+	}
+	if len(v) == dim {
+		return v
+	}
+	out := make([]float32, dim)
+	if len(v) > dim {
+		copy(out, v[:dim])
+	} else {
+		copy(out, v)
+	}
+	return out
+}
+
+// clampEmbeddingProvider wraps an EmbeddingProvider and clamps each vector to a fixed width
+// so DB writes match vector(dim) schema regardless of native model output size.
+type clampEmbeddingProvider struct {
+	inner EmbeddingProvider
+	dim   int
+}
+
+// NewClampEmbeddingProvider returns inner wrapped so Embed outputs vectors of length dim.
+// If inner is nil or dim <= 0, returns inner unchanged.
+func NewClampEmbeddingProvider(inner EmbeddingProvider, dim int) EmbeddingProvider {
+	if inner == nil || dim <= 0 {
+		return inner
+	}
+	return &clampEmbeddingProvider{inner: inner, dim: dim}
+}
+
+func (c *clampEmbeddingProvider) Name() string  { return c.inner.Name() }
+func (c *clampEmbeddingProvider) Model() string { return c.inner.Model() }
+
+func (c *clampEmbeddingProvider) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	vecs, err := c.inner.Embed(ctx, texts)
+	if err != nil {
+		return nil, err
+	}
+	for i := range vecs {
+		vecs[i] = ClampEmbeddingDims(vecs[i], c.dim)
+	}
+	return vecs, nil
 }
 
 // CosineSimilarity computes the cosine similarity between two vectors.

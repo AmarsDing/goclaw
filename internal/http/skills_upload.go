@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,7 +26,8 @@ var (
 	checkUploadedSkillDeps   = skills.CheckSkillDeps
 )
 
-// handleUpload processes a ZIP file upload containing a skill (must have SKILL.md at root).
+// handleUpload processes a ZIP file upload containing one or more skills (SKILL.md at root,
+// foo/SKILL.md, or wrapper/foo/SKILL.md for multiple skills).
 func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	locale := store.LocaleFromContext(r.Context())
 	userID := store.UserIDFromContext(r.Context())
@@ -45,7 +45,6 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Save to temp file for zip processing
 	tmp, err := os.CreateTemp("", "skill-upload-*.zip")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "failed to create temp file")})
@@ -62,7 +61,6 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	fileHash := fmt.Sprintf("%x", hasher.Sum(nil))
 
-	// Open as zip
 	zr, err := zip.OpenReader(tmp.Name())
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "invalid ZIP file")})
@@ -70,168 +68,65 @@ func (h *SkillsHandler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer zr.Close()
 
-	// Validate: must have SKILL.md at root or inside a single top-level directory.
-	// Many ZIP tools wrap contents in a folder (e.g. "my-skill/SKILL.md").
-	var skillMD *zip.File
-	var stripPrefix string
-	for _, f := range zr.File {
-		name := strings.TrimPrefix(f.Name, "./")
-		if name == "SKILL.md" {
-			skillMD = f
-			stripPrefix = ""
-			break
+	roots, layoutErr := discoverSkillZipRoots(zr.File)
+	if layoutErr != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, layoutErr)})
+		return
+	}
+
+	ctx := r.Context()
+	depsCtx := context.WithoutCancel(ctx)
+
+	if len(roots) == 1 {
+		resp, upErr := h.uploadOneSkillFromZip(depsCtx, r, zr, roots[0], fileHash, size, nil)
+		if upErr != nil {
+			writeJSON(w, upErr.HTTPStatus, map[string]string{"error": skillUploadErrMsg(locale, upErr)})
+			return
 		}
-		// Allow one level of directory nesting: "dirname/SKILL.md"
-		parts := strings.SplitN(name, "/", 3)
-		if len(parts) == 2 && parts[1] == "SKILL.md" && !f.FileInfo().IsDir() {
-			skillMD = f
-			stripPrefix = parts[0] + "/"
-			break
-		}
-	}
-	if skillMD == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "ZIP must contain SKILL.md at root (or inside a single top-level directory)")})
+		writeJSON(w, http.StatusCreated, resp)
 		return
 	}
 
-	// Read and parse SKILL.md frontmatter
-	skillContent, err := readZipFile(skillMD)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "failed to read SKILL.md")})
-		return
-	}
-	if strings.TrimSpace(skillContent) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "SKILL.md is empty")})
-		return
-	}
-
-	name, description, slug, frontmatter := skills.ParseSkillFrontmatter(skillContent)
-	if name == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgRequired, "name in SKILL.md frontmatter")})
-		return
-	}
-	if slug == "" {
-		slug = skills.Slugify(name)
-	}
-	if !skills.SlugRegexp.MatchString(slug) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidSlug, "slug")})
-		return
-	}
-
-	// Check slug conflict with system skill
-	if h.skills.IsSystemSkill(slug) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": i18n.T(locale, i18n.MsgInvalidRequest, "slug conflicts with a system skill")})
-		return
-	}
-
-	tenantSkillsBase := h.tenantSkillsDir(r)
-	uploadLock := h.skillUploadLock(filepath.Join(tenantSkillsBase, slug))
-	uploadLock.Lock()
-	defer uploadLock.Unlock()
-
-	// Determine version (always increment — includes archived skills so re-upload gets v2+)
-	version := h.skills.GetNextVersion(r.Context(), slug)
-
-	// Extract to filesystem: tenant-scoped skills-store/slug/version/
-	destDir := filepath.Join(tenantSkillsBase, slug, fmt.Sprintf("%d", version))
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgInternalError, "failed to create skill directory")})
-		return
-	}
-
-	for _, f := range zr.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		// Skip symlinks in ZIP — prevent directory escape attacks
-		if f.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		// Strip wrapper directory prefix if ZIP had one
-		entryName := strings.TrimPrefix(f.Name, "./")
-		if stripPrefix != "" {
-			entryName = strings.TrimPrefix(entryName, stripPrefix)
-			if entryName == "" {
-				continue
+	batchSeen := make(map[string]struct{})
+	var okSkills []map[string]any
+	var failed []map[string]string
+	for _, root := range roots {
+		resp, upErr := h.uploadOneSkillFromZip(depsCtx, r, zr, root, fileHash, size, batchSeen)
+		if upErr != nil {
+			slug := upErr.Slug
+			if slug == "" {
+				slug = strings.TrimSuffix(strings.TrimSuffix(root.stripPrefix, "/"), "/")
+				if i := strings.LastIndex(slug, "/"); i >= 0 {
+					slug = slug[i+1:]
+				}
 			}
-		}
-		// Skip macOS/system artifacts
-		if skills.IsSystemArtifact(entryName) {
+			failed = append(failed, map[string]string{
+				"slug":  slug,
+				"error": skillUploadErrMsg(locale, upErr),
+			})
 			continue
 		}
-		// Security: prevent path traversal
-		name := filepath.Clean(entryName)
-		if strings.Contains(name, "..") {
-			continue
-		}
-		destPath := filepath.Join(destDir, name)
-		if !strings.HasPrefix(destPath, destDir+string(filepath.Separator)) {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			continue
-		}
-		data, err := readZipFile(f)
-		if err != nil {
-			continue
-		}
-		os.WriteFile(destPath, []byte(data), 0644)
+		okSkills = append(okSkills, resp)
 	}
 
-	// Save metadata to DB
-	desc := description
-	skill := store.SkillCreateParams{
-		Name:        name,
-		Slug:        slug,
-		Description: &desc,
-		OwnerID:     userID,
-		Visibility:  "internal",
-		Version:     version,
-		FilePath:    destDir,
-		FileSize:    size,
-		FileHash:    &fileHash,
-		Frontmatter: frontmatter,
-	}
-
-	// Scan and check dependencies
-	response := map[string]any{"slug": slug, "version": version, "name": name, "status": "active"}
-	depState := uploadSkillDepState{}
-	depsCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), uploadDepsInstallTimeout)
-	defer cancel()
-
-	manifest := skills.ScanSkillDeps(destDir)
-	if manifest != nil && !manifest.IsEmpty() {
-		if ok, missing := checkUploadedSkillDeps(manifest); !ok {
-			depState = h.reconcileUploadedSkillDeps(
-				depsCtx,
-				slug,
-				manifest,
-				missing,
-				canAutoInstallUploadedSkillDeps(r.Context()),
-			)
-			skill.Status = depState.status
-			skill.MissingDeps = depState.missing
-			for key, value := range depState.response {
-				response[key] = value
-			}
-		}
-	}
-
-	// Use depsCtx (non-cancellable) so the DB write completes even if the
-	// client disconnects during the dep-install window.
-	id, err := h.skills.CreateSkillManaged(depsCtx, skill)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": i18n.T(locale, i18n.MsgFailedToCreate, "skill", err.Error())})
+	if len(okSkills) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":  i18n.T(locale, i18n.MsgInvalidRequest, "no skills could be imported from the ZIP"),
+			"multi":  true,
+			"failed": failed,
+		})
 		return
 	}
-	response["id"] = id
 
-	h.skills.BumpVersion()
-	emitAudit(h.msgBus, r, "skill.uploaded", "skill", slug)
-	slog.Info("skill uploaded", "id", id, "slug", slug, "version", version, "size", header.Size, "status", skill.Status)
-	depState.emit(h, slug)
-
-	writeJSON(w, http.StatusCreated, response)
+	out := map[string]any{
+		"multi":  true,
+		"skills": okSkills,
+	}
+	if len(failed) > 0 {
+		out["failed"] = failed
+	}
+	slog.Info("multi skill upload", "imported", len(okSkills), "failed", len(failed), "zip_bytes", header.Size)
+	writeJSON(w, http.StatusCreated, out)
 }
 
 func canAutoInstallUploadedSkillDeps(ctx context.Context) bool {
