@@ -40,6 +40,8 @@ export const ROUTES = {
   ACTIVITY: "/activity",
   API_KEYS: "/api-keys",
   PACKAGES: "/packages",
+  MARKETPLACE: "/marketplace",
+  MARKETPLACE_DETAIL: "/marketplace/:id",
   TENANTS: "/admin/tenants",
   TENANT_DETAIL: "/admin/tenants/:id",
   SETUP: "/setup",

@@ -41,7 +41,7 @@ func (l *Loop) pipelineCallbacks(req *RunRequest, bridgeRS *runState) pipelineCa
 		loadSessionHistory: l.makeLoadSessionHistory(),
 		resolveWorkspace:   l.makeResolveWorkspace(req),
 		loadContextFiles:   l.makeLoadContextFiles(),
-		buildMessages:      l.makeBuildMessages(),
+		buildMessages:      l.makeBuildMessages(req),
 		enrichMedia:        l.makeEnrichMedia(req),
 		injectReminders:    l.makeInjectReminders(req),
 		buildFilteredTools: l.makeBuildFilteredTools(req),
@@ -121,7 +121,7 @@ func (l *Loop) makeLoadContextFiles() func(ctx context.Context, userID string) (
 	}
 }
 
-func (l *Loop) makeBuildMessages() func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
+func (l *Loop) makeBuildMessages(req *RunRequest) func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
 	return func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
 		msgs, _ := l.buildMessages(ctx, history, summary,
 			input.Message, input.ExtraSystemPrompt,
@@ -402,4 +402,3 @@ func (l *Loop) makeBootstrapCleanup() func(ctx context.Context, state *pipeline.
 		return l.bootstrapCleanup(ctx, l.agentUUID, state.Input.UserID)
 	}
 }
-

@@ -105,6 +105,12 @@ const ApiKeysPage = lazyWithRetry(() =>
 const PackagesPage = lazyWithRetry(() =>
   import("@/pages/packages/packages-page").then((m) => ({ default: m.PackagesPage })),
 );
+const MarketplacePage = lazyWithRetry(() =>
+  import("@/pages/marketplace/marketplace-page").then((m) => ({ default: m.MarketplacePage })),
+);
+const MarketplaceDetailPage = lazyWithRetry(() =>
+  import("@/pages/marketplace/marketplace-detail-page").then((m) => ({ default: m.MarketplaceDetailPage })),
+);
 const TenantsAdminPage = lazyWithRetry(() =>
   import("@/pages/tenants-admin/tenants-admin-page").then((m) => ({ default: m.TenantsAdminPage })),
 );
@@ -187,6 +193,8 @@ export function AppRoutes() {
           <Route path={ROUTES.TTS} element={<RequireCrossTenant><TtsPage /></RequireCrossTenant>} />
           <Route path={ROUTES.STORAGE} element={<RequireAdmin><StoragePage /></RequireAdmin>} />
           <Route path={ROUTES.PACKAGES} element={<RequireAdmin><PackagesPage /></RequireAdmin>} />
+          <Route path={ROUTES.MARKETPLACE} element={<MarketplacePage />} />
+          <Route path={ROUTES.MARKETPLACE_DETAIL} element={<MarketplaceDetailPage />} />
           <Route path={ROUTES.TENANTS} element={<RequireCrossTenant><TenantsAdminPage /></RequireCrossTenant>} />
           <Route path={ROUTES.TENANT_DETAIL} element={<RequireCrossTenant><TenantDetailPage /></RequireCrossTenant>} />
 

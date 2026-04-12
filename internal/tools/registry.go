@@ -144,6 +144,26 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return r.resolve(name)
 }
 
+// IsConcurrencySafe reports whether a tool may execute in parallel with other
+// parallel-safe tools. Explicit marker wins; otherwise read-only metadata is
+// treated as safe.
+func (r *Registry) IsConcurrencySafe(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tool, ok := r.resolve(name)
+	if !ok || tool == nil {
+		return false
+	}
+	if marker, ok := tool.(ConcurrencySafeTool); ok {
+		return marker.IsConcurrencySafe()
+	}
+	meta, ok := r.metadata[name]
+	if !ok {
+		meta = inferMetadata(name)
+	}
+	return meta.IsReadOnly() && !meta.HasCapability(CapAsync)
+}
+
 // Unregister removes a tool from the registry by name.
 func (r *Registry) Unregister(name string) {
 	r.mu.Lock()

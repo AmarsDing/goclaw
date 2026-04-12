@@ -144,6 +144,11 @@ func wireExtras(
 	// vaultIntc is set later by wireVault but captured by closure in OnTextUploaded.
 	var vaultIntc *tools.VaultInterceptor
 
+	// spiritRunFn is set after delegateRunFn is defined (line ~358).
+	// The closure below captures the pointer so spirit orchestration is available
+	// once the delegate infrastructure is wired.
+	var spiritRunFn tools.DelegateRunFunc
+
 	resolver := agent.NewManagedResolver(agent.ResolverDeps{
 		AgentStore:             stores.Agents,
 		ProviderStore:          stores.Providers,
@@ -190,6 +195,13 @@ func wireExtras(
 		AutoInjector:           autoInjector,
 		EvolutionMetricsStore:  stores.EvolutionMetrics,
 		DomainBus:              domainBus,
+		RuntimeDB:              stores.DB,
+		SpiritDelegateRunFn: func(ctx context.Context, req tools.DelegateRequest) (tools.DelegateResult, error) {
+			if spiritRunFn == nil {
+				return tools.DelegateResult{}, fmt.Errorf("spirit delegation not yet available")
+			}
+			return spiritRunFn(ctx, req)
+		},
 		OnTextUploaded: func(ctx context.Context, path, content string) {
 			if vaultIntc != nil {
 				vaultIntc.AfterWrite(ctx, path, content)
@@ -385,7 +397,9 @@ func wireExtras(
 		delegateTool := tools.NewDelegateTool(stores.AgentLinks, stores.Agents, domainBus, delegateRunFn)
 		delegateTool.SetMsgBus(msgBus)
 		toolsReg.Register(delegateTool)
-		slog.Info("delegate tool wired")
+		// Expose the same run function to the spirit orchestrator (captured by closure above).
+		spiritRunFn = delegateRunFn
+		slog.Info("delegate tool wired; spirit orchestrator enabled")
 	}
 
 	// --- Cache invalidation event subscribers ---

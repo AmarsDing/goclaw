@@ -297,8 +297,10 @@ func TestPipeline_BuildResultPopulatesRunID(t *testing.T) {
 	if result.TotalUsage.TotalTokens != 15 {
 		t.Errorf("result.TotalUsage.TotalTokens = %d, want 15", result.TotalUsage.TotalTokens)
 	}
-	if result.Duration <= 0 {
-		t.Errorf("result.Duration = %v, want > 0", result.Duration)
+	// Duration uses time.Since; on some platforms (notably Windows) very fast runs
+	// can measure as 0 due to timer resolution — only negative is invalid.
+	if result.Duration < 0 {
+		t.Errorf("result.Duration = %v, want >= 0", result.Duration)
 	}
 }
 

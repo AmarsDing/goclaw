@@ -31,6 +31,12 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 	// 1. Iteration budget nudges (70% / 90%)
 	s.maybeInjectNudge(state)
 
+	// 1b. Reactive compact before LLM call when prompt is near the effective
+	// context window. This reduces truncation loops for long-running sessions.
+	if err := s.maybeReactiveCompact(ctx, state); err != nil {
+		return err
+	}
+
 	// 2. Build filtered tool definitions
 	var toolDefs []providers.ToolDefinition
 	if s.deps.BuildFilteredTools != nil {
@@ -121,6 +127,33 @@ func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 		s.deps.EmitBlockReply(resp.Content)
 	}
 
+	return nil
+}
+
+func (s *ThinkStage) maybeReactiveCompact(ctx context.Context, state *RunState) error {
+	if s.deps.TokenCounter == nil || s.deps.CompactMessages == nil {
+		return nil
+	}
+	contextWindow := state.Context.EffectiveContextWindow
+	if contextWindow <= 0 {
+		contextWindow = s.deps.Config.ContextWindow
+	}
+	if contextWindow <= 0 {
+		return nil
+	}
+	totalTokens := s.deps.TokenCounter.CountMessages(state.Model, state.Messages.All())
+	threshold := int(float64(contextWindow) * 0.8)
+	if totalTokens < threshold {
+		return nil
+	}
+	compacted, err := s.deps.CompactMessages(ctx, state.Messages.History(), state.Model)
+	if err != nil {
+		return fmt.Errorf("reactive compact: %w", err)
+	}
+	state.Messages.SetHistory(compacted)
+	state.Compact.CompactionCount++
+	state.Prune.HistoryTokens = s.deps.TokenCounter.CountMessages(state.Model, compacted)
+	state.Prune.HistoryBudget = contextWindow
 	return nil
 }
 

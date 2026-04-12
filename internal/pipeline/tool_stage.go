@@ -37,10 +37,10 @@ func (s *ToolStage) Execute(ctx context.Context, state *RunState) error {
 		return fmt.Errorf("ExecuteToolCall callback not configured")
 	}
 
-	// Parallel path: separate I/O (parallel) from state mutation (sequential).
-	// Requires both ExecuteToolRaw and ProcessToolResult callbacks.
+	// Parallel path: readonly/concurrency-safe tools execute in batches; mutating
+	// tools stay sequential to preserve safety and ordering.
 	if len(toolCalls) > 1 && s.deps.ExecuteToolRaw != nil && s.deps.ProcessToolResult != nil {
-		return s.executeParallel(ctx, state, toolCalls)
+		return s.executePartitioned(ctx, state, toolCalls)
 	}
 
 	// Sequential fallback: ExecuteToolCall handles both I/O and state mutation.
@@ -60,6 +60,68 @@ func (s *ToolStage) Execute(ctx context.Context, state *RunState) error {
 	}
 
 	s.checkExitConditions(state)
+	return nil
+}
+
+func (s *ToolStage) executePartitioned(ctx context.Context, state *RunState, toolCalls []providers.ToolCall) error {
+	var parallelBatch []providers.ToolCall
+	flushParallel := func() error {
+		if len(parallelBatch) == 0 {
+			return nil
+		}
+		if len(parallelBatch) == 1 {
+			tc := parallelBatch[0]
+			msgs, err := s.deps.ExecuteToolCall(ctx, state, tc)
+			if err != nil {
+				return fmt.Errorf("execute tool %s: %w", tc.Name, err)
+			}
+			for _, msg := range msgs {
+				state.Messages.AppendPending(msg)
+			}
+			state.Tool.TotalToolCalls++
+		} else {
+			if err := s.executeParallel(ctx, state, parallelBatch); err != nil {
+				return err
+			}
+		}
+		parallelBatch = nil
+		if state.Tool.LoopKilled {
+			s.result = BreakLoop
+		}
+		return nil
+	}
+
+	for _, tc := range toolCalls {
+		if s.isParallelSafe(tc.Name) {
+			parallelBatch = append(parallelBatch, tc)
+			continue
+		}
+		if err := flushParallel(); err != nil {
+			return err
+		}
+		if s.result == BreakLoop {
+			return nil
+		}
+		msgs, err := s.deps.ExecuteToolCall(ctx, state, tc)
+		if err != nil {
+			return fmt.Errorf("execute tool %s: %w", tc.Name, err)
+		}
+		for _, msg := range msgs {
+			state.Messages.AppendPending(msg)
+		}
+		state.Tool.TotalToolCalls++
+		if state.Tool.LoopKilled {
+			s.result = BreakLoop
+			return nil
+		}
+	}
+
+	if err := flushParallel(); err != nil {
+		return err
+	}
+	if s.result != BreakLoop {
+		s.checkExitConditions(state)
+	}
 	return nil
 }
 
@@ -103,6 +165,13 @@ func (s *ToolStage) executeParallel(ctx context.Context, state *RunState, toolCa
 
 	s.checkExitConditions(state)
 	return nil
+}
+
+func (s *ToolStage) isParallelSafe(toolName string) bool {
+	if s.deps.ToolConcurrencySafe == nil {
+		return false
+	}
+	return s.deps.ToolConcurrencySafe(toolName)
 }
 
 // checkExitConditions checks read-only streak and tool budget.

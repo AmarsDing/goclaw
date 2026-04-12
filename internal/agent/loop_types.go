@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"sync"
 	"sync/atomic"
 
@@ -9,17 +10,26 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/bootstrap"
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
+	"github.com/nextlevelbuilder/goclaw/internal/compression"
+	"github.com/nextlevelbuilder/goclaw/internal/consolidation"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
+	"github.com/nextlevelbuilder/goclaw/internal/hooks"
+	"github.com/nextlevelbuilder/goclaw/internal/lifecycle"
 	mcpbridge "github.com/nextlevelbuilder/goclaw/internal/mcp"
 	"github.com/nextlevelbuilder/goclaw/internal/media"
 	"github.com/nextlevelbuilder/goclaw/internal/memory"
+	"github.com/nextlevelbuilder/goclaw/internal/permissions"
+	"github.com/nextlevelbuilder/goclaw/internal/plugins"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
+	"github.com/nextlevelbuilder/goclaw/internal/resume"
 	"github.com/nextlevelbuilder/goclaw/internal/sandbox"
 	"github.com/nextlevelbuilder/goclaw/internal/skills"
+	"github.com/nextlevelbuilder/goclaw/internal/spirit"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/internal/tracing"
+	"github.com/nextlevelbuilder/goclaw/pkg/sdk"
 )
 
 // bootstrapAutoCleanupTurns is the number of user messages after which
@@ -77,8 +87,8 @@ type Loop struct {
 	// agentUUID is the canonical DB primary key. Use for SQL WHERE/JOIN,
 	// DomainEvent.AgentID, OTel span attributes, and context propagation via
 	// store.WithAgentID. See docs/agent-identity-conventions.md.
-	agentUUID uuid.UUID
-	tenantID  uuid.UUID // agent's owning tenant
+	agentUUID        uuid.UUID
+	tenantID         uuid.UUID // agent's owning tenant
 	agentType        string    // "open" or "predefined"
 	defaultTimezone  string    // system default timezone for bootstrap pre-fill
 	provider         providers.Provider
@@ -102,7 +112,7 @@ type Loop struct {
 	// Memory flush runs if callback != nil; auto-inject runs if AutoInjector != nil.
 	autoInjector memory.AutoInjector // v3 L0 memory auto-inject (nil = disabled)
 
-	eventPub        bus.EventPublisher // currently unused by Loop; kept for future use
+	eventPub        bus.EventPublisher      // currently unused by Loop; kept for future use
 	domainBus       eventbus.DomainEventBus // V3 domain event bus for consolidation pipeline
 	sessions        store.SessionStore
 	tools           tools.ToolExecutor
@@ -220,14 +230,34 @@ type Loop struct {
 	memStore store.MemoryStore
 
 	// v3 orchestration mode (spawn/delegate/team) — controls tool visibility
-	orchMode          OrchestrationMode
-	delegateTargets   []DelegateTargetEntry // delegation targets for prompt injection
+	orchMode        OrchestrationMode
+	delegateTargets []DelegateTargetEntry // delegation targets for prompt injection
 
 	// v3 evolution metrics store (nil = disabled)
 	evolutionMetricsStore store.EvolutionMetricsStore
 
 	// User identity resolver: maps channel contacts to merged tenant users for credential lookups.
 	userResolver UserIdentityResolver
+
+	// DreamWeaver runtime services. When dreamweaverCfg is nil or disabled these
+	// remain inert and the loop behaves like the legacy pipeline.
+	dreamweaverCfg      *config.DreamWeaverConfig
+	runtimeDB           *sql.DB
+	spiritDelegateRunFn tools.DelegateRunFunc // enables multi-agent orchestration
+	lifecycleMgr        *lifecycle.Manager
+	hookRegistry   *hooks.Registry
+	governor       *permissions.Governor
+	compressionEng *compression.Engine
+	resumeEng      *resume.Engine
+	transcripts    sync.Map // runID -> *message.Transcript
+	sdkBridge      *sdk.Bridge
+	pluginRegistry *plugins.Registry
+	profileMgr          *spirit.ProfileManager
+	spiritRouter        *spirit.Router
+	spiritOrchestrator  *spirit.Orchestrator
+	learningLoop        *spirit.LearningLoop
+	topicWorker    *consolidation.TopicWorker
+	dailyLogWorker *consolidation.DailyLogWorker
 }
 
 // AgentEvent is emitted during agent execution for WS broadcasting.
@@ -314,7 +344,7 @@ type LoopConfig struct {
 	TenantID    uuid.UUID // agent's owning tenant — injected into execution context
 	AgentType   string    // "open" or "predefined"
 	DisplayName string    // human-readable agent display name (for runtime section)
-	IsTeamLead bool      // agent leads a team (from resolver detection)
+	IsTeamLead  bool      // agent leads a team (from resolver detection)
 
 	// Per-user profile + file seeding + dynamic context loading
 	EnsureUserProfile EnsureUserProfileFunc // preferred: separate profile + workspace
@@ -389,14 +419,23 @@ type LoopConfig struct {
 	MCPUserCredSrvs []store.MCPAccessInfo // servers needing per-user creds
 
 	// V3 orchestration mode (resolved by resolver, controls tool visibility)
-	OrchMode          OrchestrationMode
-	DelegateTargets   []DelegateTargetEntry // delegation targets for prompt injection
+	OrchMode        OrchestrationMode
+	DelegateTargets []DelegateTargetEntry // delegation targets for prompt injection
 
 	// V3 evolution metrics store for recording tool/retrieval/feedback metrics
 	EvolutionMetricsStore store.EvolutionMetricsStore
 
 	// User identity resolver for credential lookups (maps channel contacts → tenant users)
 	UserResolver UserIdentityResolver
+
+	// DreamWeaver deep-fusion config (nil = disabled)
+	DreamWeaver *config.DreamWeaverConfig
+	RuntimeDB   *sql.DB
+
+	// SpiritDelegateRunFn allows the spirit orchestrator to run sub-tasks via
+	// the agent delegation mechanism. When nil, multi-agent orchestration is
+	// skipped and the spirit only produces intent hints in the system prompt.
+	SpiritDelegateRunFn tools.DelegateRunFunc
 }
 
 const defaultMaxTokens = config.DefaultMaxTokens
@@ -432,7 +471,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		guard = NewInputGuard()
 	}
 
-	return &Loop{
+	loop := &Loop{
 		id:                     cfg.ID,
 		displayName:            cfg.DisplayName,
 		agentUUID:              cfg.AgentUUID,
@@ -508,7 +547,12 @@ func NewLoop(cfg LoopConfig) *Loop {
 		delegateTargets:        cfg.DelegateTargets,
 		evolutionMetricsStore:  cfg.EvolutionMetricsStore,
 		userResolver:           cfg.UserResolver,
+		dreamweaverCfg:         defaultDreamWeaverConfig(cfg.DreamWeaver),
+		runtimeDB:              cfg.RuntimeDB,
+		spiritDelegateRunFn:    cfg.SpiritDelegateRunFn,
 	}
+	loop.initDreamWeaverServices()
+	return loop
 }
 
 // RunRequest is the input for processing a message through the agent.
@@ -570,7 +614,7 @@ type RunRequest struct {
 // RunResult is the output of a completed agent run.
 type RunResult struct {
 	Content        string           `json:"content"`
-	Thinking       string           `json:"thinking,omitempty"`       // reasoning content from thinking models (Claude, o3, DeepSeek-R1, Kimi)
+	Thinking       string           `json:"thinking,omitempty"` // reasoning content from thinking models (Claude, o3, DeepSeek-R1, Kimi)
 	RunID          string           `json:"runId"`
 	Iterations     int              `json:"iterations"`
 	Usage          *providers.Usage `json:"usage,omitempty"`

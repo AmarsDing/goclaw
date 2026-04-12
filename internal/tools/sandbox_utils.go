@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -14,12 +15,11 @@ import (
 // and joins it with containerBase.
 //
 // Example: globalWorkspace="/app/workspace", ctx workspace="/app/workspace/agent-a/user-123"
-// → returns "/workspace/agent-a/user-123"
+// returns "/workspace/agent-a/user-123".
 func SandboxCwd(ctx context.Context, globalWorkspace, containerBase string) (string, error) {
 	ws := ToolWorkspaceFromCtx(ctx)
 	if ws == "" {
-		// No per-request workspace — fall back to container root.
-		return containerBase, nil
+		return containerPath(containerBase), nil
 	}
 
 	rel, err := filepath.Rel(globalWorkspace, ws)
@@ -28,18 +28,26 @@ func SandboxCwd(ctx context.Context, globalWorkspace, containerBase string) (str
 	}
 
 	if rel == "." {
-		return containerBase, nil
+		return containerPath(containerBase), nil
 	}
-	return filepath.Join(containerBase, rel), nil
+	return path.Join(containerPath(containerBase), filepath.ToSlash(rel)), nil
 }
 
 // ResolveSandboxPath resolves a tool-provided path (relative or absolute)
-// against the sandbox container CWD. If the path is relative, it is joined
-// with containerCwd. Absolute paths are returned as-is (the sandbox
-// filesystem already restricts access to the mounted volume).
-func ResolveSandboxPath(path, containerCwd string) string {
-	if filepath.IsAbs(path) {
-		return path
+// against the sandbox container CWD. Container paths are always POSIX paths
+// even when the host runs on Windows.
+func ResolveSandboxPath(p, containerCwd string) string {
+	p = filepath.ToSlash(p)
+	containerCwd = containerPath(containerCwd)
+	if strings.HasPrefix(p, "/") {
+		return path.Clean(p)
 	}
-	return filepath.Join(containerCwd, path)
+	return path.Clean(path.Join(containerCwd, p))
+}
+
+func containerPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	return path.Clean(filepath.ToSlash(p))
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bootstrap"
@@ -329,6 +330,45 @@ func TestThinkStage_LLMError_Propagates(t *testing.T) {
 	err := stage.Execute(context.Background(), state)
 	if err == nil {
 		t.Fatal("expected error from LLM, got nil")
+	}
+}
+
+func TestThinkStage_ReactiveCompact_BeforeLLM(t *testing.T) {
+	t.Parallel()
+	compactCalls := 0
+	deps := &PipelineDeps{
+		Config:       PipelineConfig{ContextWindow: 1000, MaxTokens: 100},
+		TokenCounter: &mockTokenCounter{countPerMessage: 250},
+		CompactMessages: func(_ context.Context, msgs []providers.Message, _ string) ([]providers.Message, error) {
+			compactCalls++
+			return msgs[:1], nil
+		},
+		CallLLM: func(_ context.Context, state *RunState, req providers.ChatRequest) (*providers.ChatResponse, error) {
+			if got := len(req.Messages); got < 2 {
+				t.Fatalf("expected compacted messages to still include system + history, got %d", got)
+			}
+			return &providers.ChatResponse{Content: "done", FinishReason: "stop"}, nil
+		},
+	}
+	stage := NewThinkStage(deps)
+	state := defaultState()
+	state.Messages.SetHistory([]providers.Message{
+		{Role: "user", Content: "one"},
+		{Role: "assistant", Content: "two"},
+		{Role: "user", Content: "three"},
+	})
+
+	if err := stage.Execute(context.Background(), state); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if compactCalls != 1 {
+		t.Fatalf("compactCalls = %d, want 1", compactCalls)
+	}
+	if got := len(state.Messages.History()); got != 1 {
+		t.Fatalf("history len = %d, want 1 after reactive compact", got)
+	}
+	if state.Compact.CompactionCount != 1 {
+		t.Fatalf("CompactionCount = %d, want 1", state.Compact.CompactionCount)
 	}
 }
 
@@ -786,6 +826,57 @@ func TestToolStage_MultipleTools_Sequential_MessagesInOrder(t *testing.T) {
 	}
 	if state.Tool.TotalToolCalls != 3 {
 		t.Errorf("TotalToolCalls = %d, want 3", state.Tool.TotalToolCalls)
+	}
+}
+
+func TestToolStage_PartitionsParallelSafeTools(t *testing.T) {
+	t.Parallel()
+	var sequential []string
+	var parallel []string
+	var mu sync.Mutex
+	deps := &PipelineDeps{
+		ExecuteToolCall: func(_ context.Context, _ *RunState, tc providers.ToolCall) ([]providers.Message, error) {
+			sequential = append(sequential, tc.Name)
+			return []providers.Message{{Role: "tool", Content: "seq:" + tc.Name}}, nil
+		},
+		ExecuteToolRaw: func(_ context.Context, tc providers.ToolCall) (providers.Message, any, error) {
+			mu.Lock()
+			parallel = append(parallel, tc.Name)
+			mu.Unlock()
+			return providers.Message{Role: "tool", Content: "raw:" + tc.Name, ToolCallID: tc.ID}, nil, nil
+		},
+		ProcessToolResult: func(_ context.Context, _ *RunState, tc providers.ToolCall, rawMsg providers.Message, _ any) []providers.Message {
+			return []providers.Message{{Role: "tool", Content: "par:" + tc.Name, ToolCallID: rawMsg.ToolCallID}}
+		},
+		ToolConcurrencySafe: func(toolName string) bool {
+			return toolName == "read_a" || toolName == "read_b"
+		},
+	}
+	stage := NewToolStage(deps)
+	state := defaultState()
+	state.Think.LastResponse = &providers.ChatResponse{
+		ToolCalls: []providers.ToolCall{
+			{ID: "1", Name: "read_a"},
+			{ID: "2", Name: "read_b"},
+			{ID: "3", Name: "write_c"},
+		},
+	}
+
+	if err := stage.Execute(context.Background(), state); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if len(sequential) != 1 || sequential[0] != "write_c" {
+		t.Fatalf("sequential = %v, want [write_c]", sequential)
+	}
+	if len(parallel) != 2 {
+		t.Fatalf("parallel = %v, want 2 readonly tools", parallel)
+	}
+	pending := state.Messages.Pending()
+	if len(pending) != 3 {
+		t.Fatalf("pending len = %d, want 3", len(pending))
+	}
+	if pending[0].Content != "par:read_a" || pending[1].Content != "par:read_b" || pending[2].Content != "seq:write_c" {
+		t.Fatalf("pending order/content = %#v", pending)
 	}
 }
 

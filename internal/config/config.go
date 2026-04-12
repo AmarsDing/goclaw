@@ -139,6 +139,22 @@ type CompactionConfig struct {
 	MemoryFlush        *MemoryFlushConfig `json:"memoryFlush,omitempty"`        // pre-compaction flush
 }
 
+// DreamWeaverConfig controls deep-runtime integration of DreamWeaver components.
+// Nil means disabled; individual flags allow gradual rollout without changing the
+// main pipeline shape.
+type DreamWeaverConfig struct {
+	Enabled               bool `json:"enabled,omitempty"`
+	LifecycleEnabled      bool `json:"lifecycle_enabled,omitempty"`
+	GovernorEnabled       bool `json:"governor_enabled,omitempty"`
+	HooksEnabled          bool `json:"hooks_enabled,omitempty"`
+	CompressionEnabled    bool `json:"compression_enabled,omitempty"`
+	ResumeEnabled         bool `json:"resume_enabled,omitempty"`
+	SDKBridgeEnabled      bool `json:"sdk_bridge_enabled,omitempty"`
+	SpiritEnabled         bool `json:"spirit_enabled,omitempty"`
+	PluginsEnabled        bool `json:"plugins_enabled,omitempty"`
+	PromptSectionsEnabled bool `json:"prompt_sections_enabled,omitempty"`
+}
+
 // MemoryFlushConfig configures the pre-compaction memory flush.
 // Matching TS AgentCompactionMemoryFlushConfig.
 type MemoryFlushConfig struct {
@@ -329,13 +345,13 @@ type ModelPricing struct {
 // When enabled, spans are exported to an OTLP-compatible backend (Jaeger, Tempo, Datadog, etc.)
 // in addition to PostgreSQL storage.
 type TelemetryConfig struct {
-	Enabled      bool                       `json:"enabled,omitempty"`       // enable OTLP export (default false)
-	Endpoint     string                     `json:"endpoint,omitempty"`      // OTLP endpoint (e.g. "localhost:4317", "https://otel.example.com:4318")
-	Protocol     string                     `json:"protocol,omitempty"`      // "grpc" (default) or "http"
-	Insecure     bool                       `json:"insecure,omitempty"`      // skip TLS verification (default false, set true for local dev)
-	ServiceName  string                     `json:"service_name,omitempty"`  // OTEL service name (default "goclaw-gateway")
-	Headers      map[string]string          `json:"headers,omitempty"`       // extra headers (e.g. auth tokens for cloud backends)
-	ModelPricing map[string]*ModelPricing    `json:"model_pricing,omitempty"` // cost per model, key = "provider/model" or just "model"
+	Enabled      bool                     `json:"enabled,omitempty"`       // enable OTLP export (default false)
+	Endpoint     string                   `json:"endpoint,omitempty"`      // OTLP endpoint (e.g. "localhost:4317", "https://otel.example.com:4318")
+	Protocol     string                   `json:"protocol,omitempty"`      // "grpc" (default) or "http"
+	Insecure     bool                     `json:"insecure,omitempty"`      // skip TLS verification (default false, set true for local dev)
+	ServiceName  string                   `json:"service_name,omitempty"`  // OTEL service name (default "goclaw-gateway")
+	Headers      map[string]string        `json:"headers,omitempty"`       // extra headers (e.g. auth tokens for cloud backends)
+	ModelPricing map[string]*ModelPricing `json:"model_pricing,omitempty"` // cost per model, key = "provider/model" or just "model"
 }
 
 // CronConfig configures the cron job system.

@@ -492,3 +492,4 @@ Six distinct workspace scenarios:
 | [10-tracing-observability.md](./10-tracing-observability.md) | Tracing collector, span hierarchy, OTel export, trace API |
 | [11-agent-teams.md](./11-agent-teams.md) | Agent teams, task board, mailbox, delegation integration |
 | [12-extended-thinking.md](./12-extended-thinking.md) | Extended thinking, per-provider support, streaming |
+| [dreamweaver/README.md](./dreamweaver/README.md) | DreamWeaver（织梦）：生命周期、多视图消息、权限治理、压缩、Hook、SDK、市场、精灵等模块索引与集成状态 |

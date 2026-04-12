@@ -132,6 +132,10 @@ func (d *gatewayDeps) wireHTTPHandlersOnServer(
 
 	// Runtime package management (install/uninstall system/pip/npm packages)
 	d.server.SetPackagesHandler(httpapi.NewPackagesHandler())
+	d.server.SetMarketplaceHandler(httpapi.NewMarketplaceHandler(d.dataDir))
+	if d.pgStores != nil && d.pgStores.DB != nil {
+		d.server.SetFeedbackHandler(httpapi.NewFeedbackHandler(d.pgStores.DB))
+	}
 
 	// API documentation (OpenAPI spec + Swagger UI at /docs)
 	d.server.SetDocsHandler(httpapi.NewDocsHandler())

@@ -196,6 +196,15 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 		}
 	}
 
+	dwSpirit, dwMemory, dwRuntime, dwRules := l.buildDreamWeaverPromptSections(ctx, &RunRequest{
+		RunID:             sessionKey,
+		SessionKey:        sessionKey,
+		Message:           userMessage,
+		UserID:            userID,
+		Channel:           channel,
+		RunKind:           "",
+		ExtraSystemPrompt: extraSystemPrompt,
+	})
 	systemPrompt := BuildSystemPrompt(SystemPromptConfig{
 		AgentID:                l.id,
 		AgentUUID:              l.agentUUID.String(),
@@ -237,6 +246,10 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 		DelegateTargets:        l.delegateTargets,
 		OrchMode:               l.orchMode,
 		ProviderContribution:   l.providerContribution(),
+		DreamWeaverSpirit:      dwSpirit,
+		DreamWeaverMemory:      dwMemory,
+		DreamWeaverRuntime:     dwRuntime,
+		DreamWeaverRules:       dwRules,
 	})
 
 	messages = append(messages, providers.Message{

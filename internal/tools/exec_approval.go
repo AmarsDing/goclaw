@@ -112,6 +112,18 @@ func NewExecApprovalManager(cfg ExecApprovalConfig) *ExecApprovalManager {
 	}
 }
 
+// ShouldApproveDangerous reports whether dangerous shell commands should be
+// routed to human approval instead of being hard-denied.
+func (m *ExecApprovalManager) ShouldApproveDangerous() bool {
+	if m == nil {
+		return false
+	}
+	if m.config.Security == ExecSecurityDeny {
+		return false
+	}
+	return m.config.Ask != ExecAskOff
+}
+
 // CheckCommand evaluates whether a command should be executed, blocked, or needs approval.
 // Returns: "allow", "deny", or "ask".
 func (m *ExecApprovalManager) CheckCommand(command string) string {

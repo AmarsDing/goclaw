@@ -18,6 +18,12 @@ type Tool interface {
 	Execute(ctx context.Context, args map[string]any) *Result
 }
 
+// ConcurrencySafeTool explicitly marks a tool as safe for parallel execution.
+// Registry fallback logic may still treat read-only tools as parallel-safe.
+type ConcurrencySafeTool interface {
+	IsConcurrencySafe() bool
+}
+
 // ContextualTool receives channel/chat context before execution.
 type ContextualTool interface {
 	Tool

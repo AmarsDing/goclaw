@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"os"
@@ -120,6 +121,13 @@ type ResolverDeps struct {
 
 	// Vault hook: called when a text file is uploaded by user (nil = no vault registration)
 	OnTextUploaded func(ctx context.Context, path, content string)
+
+	// Runtime DB connection for DreamWeaver PG-backed stores.
+	RuntimeDB *sql.DB
+
+	// SpiritDelegateRunFn enables multi-agent orchestration from the Spirit layer.
+	// When set, the spirit orchestrator uses this function to delegate sub-tasks.
+	SpiritDelegateRunFn tools.DelegateRunFunc
 }
 
 // NewManagedResolver creates a ResolverFunc that builds Loops from DB agent data.
@@ -492,6 +500,8 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			DelegateTargets:        delegateTargets,
 			EvolutionMetricsStore:  evoMetricsStore,
 			UserResolver:           newContactResolver(deps.ContactStore),
+			RuntimeDB:              deps.RuntimeDB,
+			SpiritDelegateRunFn:    deps.SpiritDelegateRunFn,
 		})
 
 		slog.Info("resolved agent from DB", "agent", agentKey, "model", ag.Model, "provider", ag.Provider)

@@ -20,6 +20,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/nextlevelbuilder/goclaw/internal/migratefile"
 )
 
 // defaultTestDSN matches the pgvector test container in the README.
@@ -51,7 +53,7 @@ func TestDB(t *testing.T, migrationsDir string) *sql.DB {
 			sharedDBErr = err
 			return
 		}
-		m, err := migrate.New("file://"+migrationsDir, dsn)
+		m, err := migrate.New(migratefile.FileURL(migrationsDir), dsn)
 		if err != nil {
 			sharedDBErr = err
 			return

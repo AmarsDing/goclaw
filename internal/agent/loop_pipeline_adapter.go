@@ -2,14 +2,21 @@ package agent
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
+	"github.com/nextlevelbuilder/goclaw/internal/hooks"
+	"github.com/nextlevelbuilder/goclaw/internal/lifecycle"
 	"github.com/nextlevelbuilder/goclaw/internal/memory"
+	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/pipeline"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/tokencount"
+	"github.com/nextlevelbuilder/goclaw/internal/tools"
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
+	"github.com/nextlevelbuilder/goclaw/pkg/sdk"
 )
 
 // runViaPipeline delegates a run to the v3 pipeline.
@@ -31,10 +38,19 @@ func (l *Loop) runViaPipeline(ctx context.Context, req RunRequest) (*RunResult, 
 	p := pipeline.NewDefaultPipeline(deps)
 	state := pipeline.NewRunState(input, nil, model, provider)
 
+	l.registerLifecycleRun(req.RunID, req.UserID)
+	defer func() {
+		l.cleanupLifecycleRun(req.RunID)
+		l.deleteTranscript(req.RunID)
+	}()
+	l.transitionLifecycle(ctx, req.RunID, lifecycle.StateInitializing, "pipeline run started")
+
 	pResult, err := p.Run(ctx, state)
 	if err != nil {
+		l.transitionLifecycle(ctx, req.RunID, lifecycle.StateFailed, err.Error())
 		return nil, err
 	}
+	l.transitionLifecycle(ctx, req.RunID, lifecycle.StateCompleted, "pipeline run completed")
 	return convertRunResult(pResult), nil
 }
 
@@ -46,6 +62,258 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 	}
 
 	cb := l.pipelineCallbacks(req, bridgeRS)
+	loadSessionHistory := cb.loadSessionHistory
+	if l.resumeEnabled() {
+		loadSessionHistory = func(ctx context.Context, sessionKey string) ([]providers.Message, string) {
+			l.transitionLifecycle(ctx, req.RunID, lifecycle.StateResuming, "loading session history")
+			history, summary := cb.loadSessionHistory(ctx, sessionKey)
+			if l.resumeEng == nil || len(history) == 0 {
+				return history, summary
+			}
+			resumed, err := l.resumeEng.Resume(ctx, history, nil)
+			if err != nil || resumed == nil {
+				return history, summary
+			}
+			return resumed.Messages, summary
+		}
+	}
+
+	buildMessages := cb.buildMessages
+	buildMessages = func(ctx context.Context, input *pipeline.RunInput, history []providers.Message, summary string) ([]providers.Message, error) {
+		msgs, err := cb.buildMessages(ctx, input, history, summary)
+		if err != nil {
+			return nil, err
+		}
+		l.storeTranscript(req.RunID, req.SessionKey, msgs)
+		return msgs, nil
+	}
+
+	callLLM := cb.callLLM
+	callLLM = func(ctx context.Context, state *pipeline.RunState, chatReq providers.ChatRequest) (*providers.ChatResponse, error) {
+		providerName := ""
+		if state.Provider != nil {
+			providerName = state.Provider.Name()
+		}
+		l.transitionLifecycle(ctx, req.RunID, lifecycle.StateThinking, "calling llm")
+		if l.hooksEnabled() && l.hookRegistry != nil {
+			_, _ = l.hookRegistry.Fire(ctx, hooks.Payload{
+				Event:      hooks.EventPreThink,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Timestamp:  time.Now(),
+				Data: hooks.ThinkPayload{
+					Iteration: state.Iteration,
+					Model:     state.Model,
+					Provider:  providerName,
+				}.AsMap(),
+			})
+		}
+		if tr := l.transcriptForRun(req.RunID); tr != nil {
+			apiView := tr.ForAPI(req.RunID)
+			if len(apiView.Messages) > 0 {
+				chatReq.Messages = apiView.Messages
+			}
+		}
+		resp, err := cb.callLLM(ctx, state, chatReq)
+		if err == nil && resp != nil {
+			l.appendTranscript(req.RunID, providers.Message{
+				Role:                "assistant",
+				Content:             resp.Content,
+				Thinking:            resp.Thinking,
+				ToolCalls:           resp.ToolCalls,
+				Phase:               resp.Phase,
+				RawAssistantContent: resp.RawAssistantContent,
+			})
+		}
+		if l.hooksEnabled() && l.hookRegistry != nil {
+			_, _ = l.hookRegistry.Fire(ctx, hooks.Payload{
+				Event:      hooks.EventPostThink,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Timestamp:  time.Now(),
+				Data: hooks.ThinkPayload{
+					Iteration: state.Iteration,
+					Model:     state.Model,
+					Provider:  providerName,
+				}.AsMap(),
+			})
+		}
+		return resp, err
+	}
+
+	pruneMessages := cb.pruneMessages
+	if l.compressionEnabled() && l.compressionEng != nil {
+		pruneMessages = func(msgs []providers.Message, budget int) []providers.Message {
+			result, compressed, err := l.compressionEng.CompressToBudget(context.Background(), msgs, budget)
+			if err != nil || !compressed || result == nil {
+				return cb.pruneMessages(msgs, budget)
+			}
+			return result.Messages
+		}
+	}
+
+	compactMessages := cb.compactMessages
+	if l.compressionEnabled() && l.compressionEng != nil {
+		compactMessages = func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error) {
+			l.transitionLifecycle(ctx, req.RunID, lifecycle.StateCompacting, "compacting context")
+			result, compressed, err := l.compressionEng.CompressToBudget(ctx, msgs, l.contextWindow)
+			if err == nil && compressed && result != nil {
+				return result.Messages, nil
+			}
+			return cb.compactMessages(ctx, msgs, model)
+		}
+	}
+
+	executeToolCall := cb.executeToolCall
+	executeToolCall = func(ctx context.Context, state *pipeline.RunState, tc providers.ToolCall) ([]providers.Message, error) {
+		l.transitionLifecycle(ctx, req.RunID, lifecycle.StateActing, "executing tool")
+		if l.governorEnabled() && l.governor != nil {
+			decision, err := l.governor.Evaluate(ctx, permissions.PermissionRequest{
+				AgentID:   l.id,
+				ToolName:  tc.Name,
+				Arguments: tc.Arguments,
+				UserID:    req.UserID,
+				RunID:     req.RunID,
+				Channel:   req.Channel,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if l.sdkBridgeEnabled() && l.sdkBridge != nil && decision != nil && decision.Action == permissions.ActionAsk {
+				l.sdkBridge.Emit(sdk.Event{
+					Type:       sdk.EventPermissionRequest,
+					RunID:      req.RunID,
+					AgentID:    l.id,
+					SessionKey: req.SessionKey,
+					Data: sdk.PermissionRequestData{
+						RequestID: tc.ID,
+						ToolName:  tc.Name,
+						Arguments: tc.Arguments,
+						Risk:      decision.Classification.Risk,
+						Class:     string(decision.Classification.Class),
+					},
+				})
+			}
+			if decision != nil && decision.Action == permissions.ActionAsk {
+				l.transitionLifecycle(ctx, req.RunID, lifecycle.StateAwaitingApproval, decision.Reason)
+				resolved, resolveErr := l.governor.ResolveApproval(ctx, permissions.PermissionRequest{
+					AgentID:   l.id,
+					ToolName:  tc.Name,
+					Arguments: tc.Arguments,
+					UserID:    req.UserID,
+					RunID:     req.RunID,
+					Channel:   req.Channel,
+				}, decision)
+				if resolveErr != nil {
+					return nil, resolveErr
+				}
+				if resolved != nil {
+					decision = resolved
+				}
+				l.transitionLifecycle(ctx, req.RunID, lifecycle.StateActing, "approval resolved")
+			}
+			if decision != nil && decision.Action == permissions.ActionDeny {
+				if l.sdkBridgeEnabled() && l.sdkBridge != nil {
+					l.sdkBridge.Emit(sdk.Event{
+						Type:       sdk.EventPermissionResult,
+						RunID:      req.RunID,
+						AgentID:    l.id,
+						SessionKey: req.SessionKey,
+						Data: sdk.PermissionResultData{
+							RequestID: tc.ID,
+							Allowed:   false,
+							Reason:    decision.Reason,
+						},
+					})
+				}
+				return []providers.Message{{
+					Role:       "tool",
+					Content:    "[permission denied] " + decision.Reason,
+					ToolCallID: tc.ID,
+					IsError:    true,
+				}}, nil
+			}
+		}
+
+		if l.hooksEnabled() && l.hookRegistry != nil {
+			results, _ := l.hookRegistry.Fire(ctx, hooks.Payload{
+				Event:      hooks.EventPreToolUse,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Timestamp:  time.Now(),
+				Data: hooks.ToolPayload{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					Arguments:  tc.Arguments,
+					Channel:    req.Channel,
+					RunKind:    req.RunKind,
+				}.AsMap(),
+			})
+			if updatedTC, blocked, reason := applyToolHookResults(tc, results); blocked {
+				return []providers.Message{{
+					Role:       "tool",
+					Content:    "[hook blocked] " + reason,
+					ToolCallID: tc.ID,
+					IsError:    true,
+				}}, nil
+			} else {
+				tc = updatedTC
+			}
+		}
+
+		if l.sdkBridgeEnabled() && l.sdkBridge != nil {
+			l.sdkBridge.Emit(sdk.Event{
+				Type:       sdk.EventToolCallStart,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Data: sdk.ToolCallStartData{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					Arguments:  tc.Arguments,
+				},
+			})
+		}
+		msgs, err := cb.executeToolCall(ctx, state, tc)
+		if err == nil {
+			l.appendTranscript(req.RunID, msgs...)
+		}
+		if l.hooksEnabled() && l.hookRegistry != nil {
+			_, _ = l.hookRegistry.Fire(ctx, hooks.Payload{
+				Event:      hooks.EventPostToolUse,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Timestamp:  time.Now(),
+				Data: hooks.ToolPayload{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					Arguments:  tc.Arguments,
+					Channel:    req.Channel,
+					RunKind:    req.RunKind,
+				}.AsMap(),
+			})
+		}
+		l.transitionLifecycle(ctx, req.RunID, lifecycle.StateObserving, "tool execution completed")
+		if l.sdkBridgeEnabled() && l.sdkBridge != nil {
+			l.sdkBridge.Emit(sdk.Event{
+				Type:       sdk.EventToolCallEnd,
+				RunID:      req.RunID,
+				AgentID:    l.id,
+				SessionKey: req.SessionKey,
+				Data: sdk.ToolCallEndData{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Name,
+					Success:    err == nil,
+					Duration:   "",
+				},
+			})
+		}
+		return msgs, err
+	}
 
 	return pipeline.PipelineDeps{
 		TokenCounter: tokencount.NewTiktokenCounter(),
@@ -84,18 +352,18 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 
 		// Context injection + session history
 		InjectContext:      cb.injectContext,
-		LoadSessionHistory: cb.loadSessionHistory,
+		LoadSessionHistory: loadSessionHistory,
 
 		// Context callbacks
 		ResolveWorkspace: cb.resolveWorkspace,
 		LoadContextFiles: cb.loadContextFiles,
-		BuildMessages:    cb.buildMessages,
+		BuildMessages:    buildMessages,
 		EnrichMedia:      cb.enrichMedia,
 		InjectReminders:  cb.injectReminders,
 
 		// Think callbacks
 		BuildFilteredTools: cb.buildFilteredTools,
-		CallLLM:            cb.callLLM,
+		CallLLM:            callLLM,
 		UniqueToolCallIDs:  uniquifyToolCallIDs,
 		EmitBlockReply: func(content string) {
 			sanitized := SanitizeAssistantContent(content)
@@ -106,20 +374,36 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 					RunID:   req.RunID,
 					Payload: map[string]string{"content": sanitized},
 				})
+				if l.sdkBridgeEnabled() && l.sdkBridge != nil {
+					l.sdkBridge.Emit(sdk.Event{
+						Type:       sdk.EventAssistantDelta,
+						RunID:      req.RunID,
+						AgentID:    l.id,
+						SessionKey: req.SessionKey,
+						Data:       sdk.DeltaData{Content: sanitized},
+					})
+				}
 			}
 		},
 
 		// Prune callbacks
-		PruneMessages:   cb.pruneMessages,
-		CompactMessages: cb.compactMessages,
+		PruneMessages:   pruneMessages,
+		CompactMessages: compactMessages,
 
 		// Memory flush
 		RunMemoryFlush: cb.runMemoryFlush,
 
 		// Tool callbacks
-		ExecuteToolCall:   cb.executeToolCall,
+		ExecuteToolCall:   executeToolCall,
 		ExecuteToolRaw:    cb.executeToolRaw,
 		ProcessToolResult: cb.processToolResult,
+		ToolConcurrencySafe: func(toolName string) bool {
+			registry, ok := l.tools.(*tools.Registry)
+			if !ok || registry == nil {
+				return false
+			}
+			return registry.IsConcurrencySafe(l.resolveToolCallName(toolName))
+		},
 		CheckReadOnly:     cb.checkReadOnly,
 
 		// Observe: drain InjectCh
@@ -149,6 +433,20 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 		DeduplicateMediaSuffix: deduplicateMediaSuffix,
 		IsSilentReply:          IsSilentReply,
 		EmitSessionCompleted: func(ctx context.Context, sessionKey string, msgCount, tokensUsed, compactionCount int) {
+			if l.hooksEnabled() && l.hookRegistry != nil {
+				_, _ = l.hookRegistry.Fire(ctx, hooks.Payload{
+					Event:      hooks.EventSessionEnd,
+					RunID:      req.RunID,
+					AgentID:    l.id,
+					SessionKey: sessionKey,
+					Timestamp:  time.Now(),
+					Data: hooks.SessionPayload{
+						Channel: req.Channel,
+						RunKind: req.RunKind,
+						UserID:  req.UserID,
+					}.AsMap(),
+				})
+			}
 			if l.domainBus != nil {
 				// Include existing session summary (from previous compaction cycles).
 				// Current cycle's compaction runs async so its summary isn't ready yet,
@@ -172,11 +470,51 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 					},
 				})
 			}
+			if l.sdkBridgeEnabled() && l.sdkBridge != nil {
+				l.sdkBridge.Emit(sdk.Event{
+					Type:       sdk.EventRunCompleted,
+					RunID:      req.RunID,
+					AgentID:    l.id,
+					SessionKey: sessionKey,
+					Data: sdk.RunCompletedData{
+						Content:    bridgeRS.finalContent,
+						Iterations: bridgeRS.iteration,
+						ToolCalls:  bridgeRS.totalToolCalls,
+						TokensUsed: tokensUsed,
+					},
+				})
+			}
+			l.persistDreamWeaverContinuity(ctx, req, sessionKey, tokensUsed, bridgeRS.finalContent, compactionCount)
 		},
 		UpdateMetadata:   cb.updateMetadata,
 		BootstrapCleanup: cb.bootstrapCleanup,
 		MaybeSummarize:   cb.maybeSummarize,
 	}
+}
+
+func applyToolHookResults(tc providers.ToolCall, results []hooks.Result) (providers.ToolCall, bool, string) {
+	updated := tc
+	for _, result := range results {
+		switch result.Action {
+		case hooks.ResultActionBlock:
+			reason := strings.TrimSpace(result.Output)
+			if reason == "" {
+				reason = "blocked by hook"
+			}
+			return tc, true, reason
+		case hooks.ResultActionModify:
+			if result.Mutations == nil {
+				continue
+			}
+			if args, ok := result.Mutations["arguments"].(map[string]any); ok {
+				updated.Arguments = args
+			}
+			if name, ok := result.Mutations["tool_name"].(string); ok && name != "" {
+				updated.Name = name
+			}
+		}
+	}
+	return updated, false, ""
 }
 
 // convertRunInput converts agent.RunRequest to pipeline.RunInput.

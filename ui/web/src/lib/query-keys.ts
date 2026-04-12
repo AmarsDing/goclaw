@@ -86,6 +86,12 @@ export const queryKeys = {
     all: ["packages"] as const,
     runtimes: ["packages", "runtimes"] as const,
   },
+  marketplace: {
+    all: ["marketplace"] as const,
+    installed: ["marketplace", "installed"] as const,
+    list: (params: Record<string, unknown>) => ["marketplace", "list", params] as const,
+    detail: (id: string) => ["marketplace", "detail", id] as const,
+  },
   tenantUsers: {
     all: ["tenantUsers"] as const,
   },

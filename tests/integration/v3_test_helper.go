@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/nextlevelbuilder/goclaw/internal/migratefile"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 	"github.com/nextlevelbuilder/goclaw/internal/store/pg"
 )
@@ -49,7 +50,7 @@ func testDB(t *testing.T) *sql.DB {
 		}
 
 		// Run migrations once for the entire test run.
-		m, err := migrate.New("file://../../migrations", dsn)
+		m, err := migrate.New(migratefile.FileURL("../../migrations"), dsn)
 		if err != nil {
 			sharedDBErr = err
 			return

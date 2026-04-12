@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nextlevelbuilder/goclaw/internal/config"
+	"github.com/nextlevelbuilder/goclaw/internal/migratefile"
 	"github.com/nextlevelbuilder/goclaw/internal/upgrade"
 )
 
@@ -40,7 +41,7 @@ func resolveMigrationsDir() string {
 
 func newMigrator(dsn string) (*migrate.Migrate, error) {
 	dir := resolveMigrationsDir()
-	m, err := migrate.New("file://"+dir, dsn)
+	m, err := migrate.New(migratefile.FileURL(dir), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("create migrator: %w", err)
 	}

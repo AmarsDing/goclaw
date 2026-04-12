@@ -97,35 +97,35 @@ type SystemPromptConfig struct {
 	DisplayName   string // human-readable agent display name
 	Model         string
 	Workspace     string
-	Channel       string                 // runtime channel instance name (e.g. "my-telegram-bot")
-	ChannelType   string                 // platform type (e.g. "zalo_personal", "telegram")
-	ChatTitle     string                 // group chat display name (shown in identity line)
-	PeerKind      string                 // "direct" or "group"
-	OwnerIDs      []string               // owner sender IDs
-	Mode          PromptMode             // full or minimal
-	ToolNames     []string               // registered tool names
-	SkillsSummary string                 // XML from skills.Loader.BuildSummary()
-	HasMemory     bool                   // memory_search/memory_get available?
-	HasSpawn      bool                   // spawn tool available?
-	IsTeamContext  bool                   // inject team sections (leader inbound OR team dispatch)
-	TeamWorkspace  string                 // absolute path to team shared workspace (empty if not in team)
-	TeamMembers    []store.TeamMemberData // team member roster for task assignment
-	TeamGuidance   string                 // edition-specific guidance from TeamActionPolicy.MemberGuidance()
+	Channel       string                  // runtime channel instance name (e.g. "my-telegram-bot")
+	ChannelType   string                  // platform type (e.g. "zalo_personal", "telegram")
+	ChatTitle     string                  // group chat display name (shown in identity line)
+	PeerKind      string                  // "direct" or "group"
+	OwnerIDs      []string                // owner sender IDs
+	Mode          PromptMode              // full or minimal
+	ToolNames     []string                // registered tool names
+	SkillsSummary string                  // XML from skills.Loader.BuildSummary()
+	HasMemory     bool                    // memory_search/memory_get available?
+	HasSpawn      bool                    // spawn tool available?
+	IsTeamContext bool                    // inject team sections (leader inbound OR team dispatch)
+	TeamWorkspace string                  // absolute path to team shared workspace (empty if not in team)
+	TeamMembers   []store.TeamMemberData  // team member roster for task assignment
+	TeamGuidance  string                  // edition-specific guidance from TeamActionPolicy.MemberGuidance()
 	ContextFiles  []bootstrap.ContextFile // bootstrap files for # Project Context
-	ExtraPrompt   string                 // extra system prompt (subagent context, etc.)
-	AgentType     string                 // "open" or "predefined" — affects context file framing
+	ExtraPrompt   string                  // extra system prompt (subagent context, etc.)
+	AgentType     string                  // "open" or "predefined" — affects context file framing
 
 	HasSkillSearch      bool              // skill_search tool registered? (for search-mode prompt)
 	HasSkillManage      bool              // skill_manage tool registered + skill_evolve enabled for this agent
 	PinnedSkillsSummary string            // XML summary of pinned skills only (hybrid mode)
-	HasMCPToolSearch   bool              // mcp_tool_search tool registered? (MCP search mode)
-	HasKnowledgeGraph  bool              // knowledge_graph_search tool registered?
-	HasMemoryExpand    bool              // memory_expand tool registered? (v3 episodic deep retrieval)
-	MCPToolDescs       map[string]string // MCP tool name → description (inline mode only)
+	HasMCPToolSearch    bool              // mcp_tool_search tool registered? (MCP search mode)
+	HasKnowledgeGraph   bool              // knowledge_graph_search tool registered?
+	HasMemoryExpand     bool              // memory_expand tool registered? (v3 episodic deep retrieval)
+	MCPToolDescs        map[string]string // MCP tool name → description (inline mode only)
 
 	// Sandbox info — matching TS sandboxInfo in system-prompt.ts
-	SandboxEnabled       bool   // exec tool runs inside Docker sandbox?
-	SandboxContainerDir  string // container-side workdir (e.g. "/workspace")
+	SandboxEnabled         bool   // exec tool runs inside Docker sandbox?
+	SandboxContainerDir    string // container-side workdir (e.g. "/workspace")
 	SandboxWorkspaceAccess string // "none", "ro", "rw"
 
 	// ProviderType identifies the LLM provider (e.g. "openai", "anthropic", "codex").
@@ -153,6 +153,13 @@ type SystemPromptConfig struct {
 
 	// Provider-specific prompt customizations (nil = defaults).
 	ProviderContribution *providers.PromptContribution
+
+	// DreamWeaver dynamic sections injected below the cache boundary.
+	DreamWeaverSpirit  string
+	DreamWeaverMemory  string
+	DreamWeaverRuntime string
+	// DreamWeaverRules holds project-level rule file content (.claude/ / CLAUDE.md).
+	DreamWeaverRules string
 }
 
 // sectionContent returns override content if provider contribution has one,
@@ -169,45 +176,45 @@ func (cfg SystemPromptConfig) sectionContent(id string, defaultFn func() []strin
 // coreToolSummaries maps tool names to one-line descriptions.
 // Shown in the ## Tooling section of the system prompt.
 var coreToolSummaries = map[string]string{
-	"read_file":     "Read file contents",
-	"write_file":    "Create or overwrite files",
-	"list_files":    "List directory contents",
-	"exec":          "Run shell commands",
-	"memory_search": "Search indexed memory files (MEMORY.md + memory/*.md)",
-	"memory_get":    "Read specific sections of memory files",
-	"spawn":         "Spawn a self-clone subagent to handle a task in the background",
-	"web_search":    "Search the web",
-	"web_fetch":     "Fetch and extract content from a URL",
-	"datetime":      "Get current date/time with timezone — use before creating cron jobs",
-	"cron":          "Manage scheduled jobs and reminders (e.g. 'remind me at 9am', 'check every morning')",
-	"heartbeat":     "Periodic background monitoring with HEARTBEAT.md. Unlike cron, auto-suppresses 'all OK' via HEARTBEAT_OK",
-	"skill_search":     "Search available skills by keyword (weather, translate, github, etc.)",
-	"skill_manage":     "Create, patch, or delete skills from conversation experience",
-	"publish_skill":    "Register a skill directory in the system database, making it discoverable",
-	"use_skill":        "Invoke a skill by name and follow its instructions",
-	"mcp_tool_search":  "Search for available MCP external integration tools by keyword",
-	"browser":          "Browse web pages interactively",
-	"tts":              "Convert text to speech audio",
-	"edit":             "Edit a file by replacing exact text matches",
-	"message":          "Send a PROACTIVE message to another channel/chat — do NOT use this to reply to the user, just respond directly",
-	"sessions_list":    "List sessions for this agent",
-	"session_status":   "Show session status (model, tokens, compaction count)",
-	"sessions_history": "Fetch message history for a session",
-	"sessions_send":    "Send a message into another session",
-	"read_image":       "Analyze images — call with path from <media:image> tags",
-	"read_audio":       "Analyze audio — call with media_id from <media:audio> tags",
-	"read_video":       "Analyze video — call with media_id from <media:video> tags",
-	"create_video":     "Generate videos from text descriptions using AI",
-	"read_document":    "Analyze documents (PDF, DOCX) from <media:document> tags. If fails, use a skill instead. Path is directly accessible",
-	"create_image":            "Generate images from text descriptions using AI",
-	"create_audio":            "Generate music or sound effects from text descriptions using AI",
-	"knowledge_graph_search":  "Find people, projects, and their connections — use for relationship questions (who works with whom, project dependencies) that memory_search may miss",
-	"team_tasks":              "Team task board — track progress, manage dependencies (spawn auto-creates delegation tasks)",
-	"list_group_members":      "List all members of the current group chat (Feishu/Lark only)",
-	"create_forum_topic":      "Create a forum topic in a Telegram supergroup",
-	"delegate":                "Delegate a task to a linked agent (requires agent_links). See ## Delegation Targets for available agents",
-	"memory_expand":           "Retrieve full session details from episodic memory results — use after memory_search returns episodic hits",
-	"vault_search": "Search documents in the knowledge vault (hybrid keyword + semantic)",
+	"read_file":              "Read file contents",
+	"write_file":             "Create or overwrite files",
+	"list_files":             "List directory contents",
+	"exec":                   "Run shell commands",
+	"memory_search":          "Search indexed memory files (MEMORY.md + memory/*.md)",
+	"memory_get":             "Read specific sections of memory files",
+	"spawn":                  "Spawn a self-clone subagent to handle a task in the background",
+	"web_search":             "Search the web",
+	"web_fetch":              "Fetch and extract content from a URL",
+	"datetime":               "Get current date/time with timezone — use before creating cron jobs",
+	"cron":                   "Manage scheduled jobs and reminders (e.g. 'remind me at 9am', 'check every morning')",
+	"heartbeat":              "Periodic background monitoring with HEARTBEAT.md. Unlike cron, auto-suppresses 'all OK' via HEARTBEAT_OK",
+	"skill_search":           "Search available skills by keyword (weather, translate, github, etc.)",
+	"skill_manage":           "Create, patch, or delete skills from conversation experience",
+	"publish_skill":          "Register a skill directory in the system database, making it discoverable",
+	"use_skill":              "Invoke a skill by name and follow its instructions",
+	"mcp_tool_search":        "Search for available MCP external integration tools by keyword",
+	"browser":                "Browse web pages interactively",
+	"tts":                    "Convert text to speech audio",
+	"edit":                   "Edit a file by replacing exact text matches",
+	"message":                "Send a PROACTIVE message to another channel/chat — do NOT use this to reply to the user, just respond directly",
+	"sessions_list":          "List sessions for this agent",
+	"session_status":         "Show session status (model, tokens, compaction count)",
+	"sessions_history":       "Fetch message history for a session",
+	"sessions_send":          "Send a message into another session",
+	"read_image":             "Analyze images — call with path from <media:image> tags",
+	"read_audio":             "Analyze audio — call with media_id from <media:audio> tags",
+	"read_video":             "Analyze video — call with media_id from <media:video> tags",
+	"create_video":           "Generate videos from text descriptions using AI",
+	"read_document":          "Analyze documents (PDF, DOCX) from <media:document> tags. If fails, use a skill instead. Path is directly accessible",
+	"create_image":           "Generate images from text descriptions using AI",
+	"create_audio":           "Generate music or sound effects from text descriptions using AI",
+	"knowledge_graph_search": "Find people, projects, and their connections — use for relationship questions (who works with whom, project dependencies) that memory_search may miss",
+	"team_tasks":             "Team task board — track progress, manage dependencies (spawn auto-creates delegation tasks)",
+	"list_group_members":     "List all members of the current group chat (Feishu/Lark only)",
+	"create_forum_topic":     "Create a forum topic in a Telegram supergroup",
+	"delegate":               "Delegate a task to a linked agent (requires agent_links). See ## Delegation Targets for available agents",
+	"memory_expand":          "Retrieve full session details from episodic memory results — use after memory_search returns episodic hits",
+	"vault_search":           "Search documents in the knowledge vault (hybrid keyword + semantic)",
 
 	// Tool aliases (edit_file, sessions_spawn, Read, Write, Edit, Bash, etc.)
 	// are registered in the tool registry but excluded from the system prompt
@@ -450,6 +457,20 @@ func BuildSystemPrompt(cfg SystemPromptConfig) string {
 		lines = append(lines, header, "", "<extra_context>", cfg.ExtraPrompt, "</extra_context>", "")
 	}
 
+	// 10.5 DreamWeaver sections — always dynamic, so keep below the cache boundary.
+	if cfg.DreamWeaverRules != "" {
+		lines = append(lines, cfg.DreamWeaverRules, "")
+	}
+	if cfg.DreamWeaverSpirit != "" {
+		lines = append(lines, cfg.DreamWeaverSpirit, "")
+	}
+	if cfg.DreamWeaverMemory != "" {
+		lines = append(lines, cfg.DreamWeaverMemory, "")
+	}
+	if cfg.DreamWeaverRuntime != "" {
+		lines = append(lines, cfg.DreamWeaverRuntime, "")
+	}
+
 	// 11b. # Project Context — dynamic files (USER.md, BOOTSTRAP.md, virtual files)
 	// Per-user/per-session content. Header already emitted by stable section above.
 	if len(dynamicFiles) > 0 {
@@ -658,5 +679,3 @@ func buildWorkspaceSection(workspace string, sandboxEnabled bool, containerDir s
 		"",
 	}
 }
-
-

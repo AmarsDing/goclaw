@@ -70,6 +70,8 @@ ui/web/                       React SPA (pnpm, Vite, Tailwind, Radix UI)
 ui/desktop/                   Wails v2 desktop app (React frontend + embedded gateway)
 ```
 
+**DreamWeaver（织梦）:** `docs/dreamweaver/README.md` — runtime (`lifecycle`, `message`, `resume`, `compression`), extension (`hooks`, `plugins`, `pkg/sdk`), ecosystem (`marketplace`, `workshop`, `alchemy`), spirit (`spirit`); extended `permissions` (governor), `consolidation` (topic, daily log), `memory` (drift).
+
 ## Key Patterns
 
 - **Store layer:** Interface-based (`store.SessionStore`, `store.AgentStore`, etc.) with shared Dialect pattern in `store/base/`. PostgreSQL (`pg/`) and SQLite (`sqlitestore/`) implementations use `database/sql` + `pgx/v5/stdlib` + sqlx, raw SQL, `BuildMapUpdate()` and `BuildScopeClause()` helpers
