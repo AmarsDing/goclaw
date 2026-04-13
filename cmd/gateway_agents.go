@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
@@ -98,6 +99,15 @@ func resolveEmbeddingFromDB(
 	return buildEmbeddingProvider(dbp, es, memCfg, providerReg)
 }
 
+// normalizeEmbeddingAPIBase ensures OpenAI-compatible embedding URLs for the provider type.
+// vLLM expects a /v1 root (same as chat registration); other types use the resolved base as-is.
+func normalizeEmbeddingAPIBase(providerType string, apiBase string) string {
+	if providerType == store.ProviderVLLM {
+		return config.ResolveVLLMOpenAIBase(apiBase)
+	}
+	return apiBase
+}
+
 // buildEmbeddingProvider creates a memory.EmbeddingProvider from a DB provider record.
 func buildEmbeddingProvider(
 	dbp *store.LLMProviderData,
@@ -124,7 +134,7 @@ func buildEmbeddingProvider(
 	}
 
 	// Dimension truncation: default to RequiredMemoryEmbeddingDimensions to match pgvector schema.
-	// Models that natively output 1536 ignore the parameter; models with larger native dims get truncated.
+	// OpenAI-style APIs accept `dimensions` for truncatable models; vLLM is handled separately (no upstream param).
 	dims := store.RequiredMemoryEmbeddingDimensions
 	if es != nil && es.Dimensions > 0 && es.Dimensions != store.RequiredMemoryEmbeddingDimensions {
 		slog.Warn("ignoring incompatible provider embedding dimensions for memory schema",
@@ -138,22 +148,33 @@ func buildEmbeddingProvider(
 				if apiBase == "" {
 					apiBase = op.APIBase()
 				}
+				apiBase = normalizeEmbeddingAPIBase(dbp.ProviderType, apiBase)
 				ep := memory.NewOpenAIEmbeddingProvider(dbp.Name, op.APIKey(), apiBase, model)
-				ep.WithDimensions(dims)
-				return ep
+				// vLLM only honors `dimensions` for Matryoshka (variable-dim) models; fixed-dim models
+				// (e.g. gemma embedding) reject the parameter — omit it and use native output.
+				if dbp.ProviderType != store.ProviderVLLM {
+					ep.WithDimensions(dims)
+				}
+				return memory.NewClampEmbeddingProvider(ep, store.RequiredMemoryEmbeddingDimensions)
 			}
 			slog.Debug("embedding provider in registry is not OpenAI-compatible, using DB record", "name", dbp.Name)
 		}
 	}
 
-	// Fallback: build directly from DB record
-	if dbp.APIKey != "" {
-		ep := memory.NewOpenAIEmbeddingProvider(dbp.Name, dbp.APIKey, apiBase, model)
-		ep.WithDimensions(dims)
-		return ep
+	// Fallback: build directly from DB record (vLLM may have no API key — same as gateway_providers).
+	key := strings.TrimSpace(dbp.APIKey)
+	if key == "" && dbp.ProviderType == store.ProviderVLLM {
+		key = "-"
 	}
-
-	return nil
+	if key == "" {
+		return nil
+	}
+	apiBase = normalizeEmbeddingAPIBase(dbp.ProviderType, apiBase)
+	ep := memory.NewOpenAIEmbeddingProvider(dbp.Name, key, apiBase, model)
+	if dbp.ProviderType != store.ProviderVLLM {
+		ep.WithDimensions(dims)
+	}
+	return memory.NewClampEmbeddingProvider(ep, store.RequiredMemoryEmbeddingDimensions)
 }
 
 func setupSubagents(providerReg *providers.Registry, cfg *config.Config, msgBus *bus.MessageBus, toolsReg *tools.Registry, workspace string, sandboxMgr sandbox.Manager) *tools.SubagentManager {

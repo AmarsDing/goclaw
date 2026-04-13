@@ -1,12 +1,13 @@
 /** Client-side validation for skill ZIP files before upload.
- * Mirrors server-side checks in internal/http/skills_upload.go
- *
- * Supports both single-skill ZIPs (SKILL.md at root or one top-level dir)
- * and multi-skill ZIPs (one SKILL.md per top-level directory). */
+ * Mirrors server-side checks in internal/http/skills_upload_layout.go and skills_upload.go
+ */
 import JSZip from "jszip";
 
 export interface SkillZipValidation {
   valid: boolean;
+  /** true when ZIP contains multiple top-level skill folders */
+  multi?: boolean;
+  skillCount?: number;
   name?: string;
   slug?: string;
   description?: string;
@@ -36,15 +37,83 @@ export interface MultiSkillZipValidation {
   error?: string;
 }
 
-// Constants matching server-side (internal/http/skills.go)
 const MAX_SKILL_SIZE = 20 * 1024 * 1024; // 20MB
 const MAX_SKILLS_PER_ZIP = 50;
 const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$/;
 const FRONTMATTER_REGEX = /^---\r?\n([\s\S]*?)\r?\n---/;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+function normalizeZipPath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/^\.\//, "").trim();
+}
+
+function zipBasename(p: string): string {
+  const parts = normalizeZipPath(p).split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+type ZipSkillEntry = { path: string; parts: string[] };
+
+function collectSkillEntries(zip: JSZip): ZipSkillEntry[] {
+  const out: ZipSkillEntry[] = [];
+  for (const key of Object.keys(zip.files)) {
+    const f = zip.files[key];
+    if (!f || f.dir) continue;
+    const n = normalizeZipPath(key);
+    if (zipBasename(n) !== "SKILL.md") continue;
+    const parts = n.split("/").filter((s) => s.length > 0);
+    out.push({ path: n, parts });
+  }
+  return out;
+}
+
+type DiscoveredRoot = { stripPrefix: string; skillKey: string };
+
+/** Same layout rules as discoverSkillZipRoots in skills_upload_layout.go */
+function discoverSkillZipRoots(zip: JSZip): { roots: DiscoveredRoot[]; error?: string } {
+  const entries = collectSkillEntries(zip);
+  if (entries.some((e) => e.parts.length > 3)) {
+    return { roots: [], error: "upload.skillMdTooDeep" };
+  }
+  if (entries.length === 0) {
+    return { roots: [], error: "upload.noSkillMd" };
+  }
+
+  const rootSkill = entries.find((e) => e.parts.length === 1 && e.parts[0] === "SKILL.md");
+  if (rootSkill) {
+    if (entries.length > 1) {
+      return { roots: [], error: "upload.layoutMixedRoot" };
+    }
+    return { roots: [{ stripPrefix: "", skillKey: "SKILL.md" }] };
+  }
+
+  const depth2 = entries.filter((e) => e.parts.length === 2 && e.parts[1] === "SKILL.md");
+  const depth3 = entries.filter((e) => e.parts.length === 3 && e.parts[2] === "SKILL.md");
+  if (depth2.length > 0 && depth3.length > 0) {
+    return { roots: [], error: "upload.layoutMixedDepth" };
+  }
+
+  if (depth2.length > 0) {
+    const dirs = [...new Set(depth2.map((e) => e.parts[0]))].sort();
+    const roots = dirs.map((d) => ({ stripPrefix: `${d}/`, skillKey: `${d}/SKILL.md` }));
+    return { roots };
+  }
+
+  if (depth3.length === 0) {
+    return { roots: [], error: "upload.noSkillMd" };
+  }
+
+  const wraps = [...new Set(depth3.map((e) => e.parts[0]))];
+  if (wraps.length > 1) {
+    return { roots: [], error: "upload.layoutMultipleWrappers" };
+  }
+  const w = wraps[0]!;
+  const children = [...new Set(depth3.filter((e) => e.parts[0] === w).map((e) => e.parts[1]))].sort();
+  const roots = children.map((c) => ({
+    stripPrefix: `${w}/${c}/`,
+    skillKey: `${w}/${c}/SKILL.md`,
+  }));
+  return { roots };
+}
 
 /**
  * Validate a skill ZIP file client-side — backward-compatible single-skill path.
@@ -55,8 +124,11 @@ export async function validateSkillZip(file: File): Promise<SkillZipValidation> 
   if (multi.error) return { valid: false, error: multi.error };
   const first = multi.skills[0];
   if (!first) return { valid: false, error: "upload.noSkillMd" };
+  const bundle = multi.skills.length > 1;
   return {
     valid: first.valid,
+    multi: bundle ? true : undefined,
+    skillCount: bundle ? multi.skills.length : undefined,
     name: first.name,
     slug: first.slug,
     description: first.description,
@@ -67,13 +139,7 @@ export async function validateSkillZip(file: File): Promise<SkillZipValidation> 
 
 /**
  * Validate a ZIP that may contain one or multiple skills.
- *
- * Detection logic:
- * - If SKILL.md exists at root → single-skill mode (root entry, dir="")
- * - Otherwise → scan each top-level directory for SKILL.md
- *
- * Returns one SkillValidationEntry per detected SKILL.md, each independently
- * validated with a SHA-256 contentHash.
+ * Returns one SkillValidationEntry per detected SKILL.md, each with contentHash.
  */
 export async function validateMultiSkillZip(file: File): Promise<MultiSkillZipValidation> {
   if (!file.name.toLowerCase().endsWith(".zip")) {
@@ -90,65 +156,32 @@ export async function validateMultiSkillZip(file: File): Promise<MultiSkillZipVa
     return { skills: [], error: "upload.invalidZip" };
   }
 
-  const entries = await findAllSkillMds(zip);
-  if (entries.length === 0) {
-    return { skills: [] };
+  const { roots, error } = discoverSkillZipRoots(zip);
+  if (error) {
+    return { skills: [], error };
   }
-  if (entries.length > MAX_SKILLS_PER_ZIP) {
+  if (roots.length === 0) {
+    return { skills: [], error: "upload.noSkillMd" };
+  }
+  if (roots.length > MAX_SKILLS_PER_ZIP) {
     return { skills: [], error: "upload.tooManySkills" };
   }
 
-  // Validate each skill entry concurrently
   const skills = await Promise.all(
-    entries.map(({ dir, content }) => validateSkillEntry(dir, content)),
+    roots.map(async (root) => {
+      const dir = root.stripPrefix.replace(/\/$/, "");
+      const f = zip.files[root.skillKey];
+      if (!f || f.dir) {
+        return validateSkillEntry(dir, "");
+      }
+      const content = await f.async("string");
+      return validateSkillEntry(dir, content);
+    }),
   );
 
   return { skills };
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-interface SkillMdEntry {
-  dir: string;
-  content: string;
-}
-
-/**
- * Find all SKILL.md files in the ZIP.
- *
- * Priority rule: if SKILL.md exists at root level, return only that one entry
- * (single-skill mode). Otherwise collect one per top-level directory.
- */
-async function findAllSkillMds(zip: JSZip): Promise<SkillMdEntry[]> {
-  // Root-level SKILL.md → single-skill mode
-  if (zip.files["SKILL.md"] && !zip.files["SKILL.md"].dir) {
-    const content = await zip.files["SKILL.md"].async("string");
-    return [{ dir: "", content }];
-  }
-
-  // Multi-skill: collect directories that contain a SKILL.md
-  const paths = Object.keys(zip.files);
-  const topDirs = new Set(
-    paths
-      .map((p) => p.split("/")[0])
-      .filter((d): d is string => Boolean(d)),
-  );
-
-  const results: SkillMdEntry[] = [];
-  // Process dirs in stable sorted order for deterministic output
-  for (const dir of [...topDirs].sort()) {
-    const key = dir + "/SKILL.md";
-    if (zip.files[key] && !zip.files[key].dir) {
-      const content = await zip.files[key].async("string");
-      results.push({ dir, content });
-    }
-  }
-  return results;
-}
-
-/** Validate a single SKILL.md entry, compute its hash, return SkillValidationEntry */
 async function validateSkillEntry(dir: string, content: string): Promise<SkillValidationEntry> {
   if (!content.trim()) {
     return { valid: false, dir, error: "upload.emptySkillMd" };
@@ -190,7 +223,6 @@ async function hashContent(content: string): Promise<string> {
     .join("");
 }
 
-/** Simple key: value parser matching server's parseSkillFrontmatter() */
 function parseFrontmatterFields(raw: string): Record<string, string> {
   const fields: Record<string, string> = {};
   for (const line of raw.split(/\r?\n/)) {

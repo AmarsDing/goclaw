@@ -16,13 +16,22 @@ export interface RuntimeStatus {
   ready: boolean
 }
 
-export interface UploadResult {
+export interface SingleUploadResult {
   id: string
   slug: string
   version: number
   name: string
   deps_warning?: string
 }
+
+/** POST /v1/skills/upload — single skill or multi-bundle ZIP */
+export interface MultiUploadResult {
+  multi: true
+  skills: SingleUploadResult[]
+  failed?: { slug: string; error: string }[]
+}
+
+export type UploadResult = SingleUploadResult | MultiUploadResult
 
 export function useSkills() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
@@ -56,7 +65,13 @@ export function useSkills() {
     try {
       const res = await getApiClient().uploadFile<UploadResult>('/v1/skills/upload', file)
       await fetchSkills()
-      toast.success('Skill uploaded')
+      if ('multi' in res && res.multi) {
+        const n = res.skills.length
+        const f = res.failed?.length ?? 0
+        toast.success(f > 0 ? `Uploaded ${n} skills (${f} failed)` : `Uploaded ${n} skills`)
+      } else {
+        toast.success('Skill uploaded')
+      }
       return res
     } catch (err) {
       toast.error('Failed to upload skill', (err as Error).message)

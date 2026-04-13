@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/memory"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -63,16 +65,30 @@ func (h *ProvidersHandler) handleVerifyEmbedding(w http.ResponseWriter, r *http.
 	if es != nil && es.APIBase != "" {
 		apiBase = es.APIBase
 	}
+	if p.ProviderType == store.ProviderVLLM {
+		apiBase = config.ResolveVLLMOpenAIBase(apiBase)
+	}
 
-	ep := memory.NewOpenAIEmbeddingProvider(p.Name, p.APIKey, apiBase, model)
+	apiKey := strings.TrimSpace(p.APIKey)
+	if apiKey == "" {
+		switch p.ProviderType {
+		case store.ProviderOllama:
+			apiKey = "ollama"
+		case store.ProviderVLLM:
+			apiKey = "-"
+		}
+	}
+
+	ep := memory.NewOpenAIEmbeddingProvider(p.Name, apiKey, apiBase, model)
 
 	// Apply dimension truncation: request body → provider settings → none.
 	// Clamp to reasonable range to avoid sending absurd values upstream.
+	// vLLM only allows `dimensions` for Matryoshka models; fixed-dim embedding models error if it is set.
 	truncDims := req.Dimensions
 	if truncDims <= 0 && es != nil && es.Dimensions > 0 {
 		truncDims = es.Dimensions
 	}
-	if truncDims > 0 && truncDims <= 8192 {
+	if p.ProviderType != store.ProviderVLLM && truncDims > 0 && truncDims <= 8192 {
 		ep.WithDimensions(truncDims)
 	}
 

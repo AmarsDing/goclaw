@@ -183,6 +183,18 @@ func (h *ProvidersHandler) registerInMemory(p *store.LLMProviderData) {
 		h.providerReg.RegisterForTenant(p.TenantID, providers.NewOpenAIProvider(p.Name, "ollama", config.DockerLocalhost(host), "llama3.3"))
 		return
 	}
+	// vLLM: OpenAI-compatible server; optional API key (vLLM --api-key); allow private LAN URLs.
+	if p.ProviderType == store.ProviderVLLM {
+		base := config.ResolveVLLMOpenAIBase(p.APIBase)
+		key := p.APIKey
+		if key == "" {
+			key = "-"
+		}
+		prov := providers.NewOpenAIProvider(p.Name, key, base, "")
+		prov.WithProviderType(store.ProviderVLLM)
+		h.providerReg.RegisterForTenant(p.TenantID, prov)
+		return
+	}
 	if p.APIKey == "" {
 		return
 	}
@@ -260,6 +272,10 @@ func validateProviderURL(rawURL string, providerType string) error {
 	case "http", "https":
 	default:
 		return fmt.Errorf("provider URL must use http or https scheme, got %q", u.Scheme)
+	}
+	// Local inference: allow RFC1918 / loopback / .local — same deployment often uses private IPs.
+	if providerType == store.ProviderOllama || providerType == store.ProviderVLLM {
+		return nil
 	}
 	host := u.Hostname()
 	// Block obvious internal targets

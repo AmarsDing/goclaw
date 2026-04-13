@@ -123,6 +123,7 @@ export function SetupPage() {
     provider.api_key === "***"
     || provider.provider_type === "claude_cli"
     || provider.provider_type === "ollama"
+    || provider.provider_type === "vllm"
     || (provider.provider_type === "chatgpt_oauth" && readyOAuthProviders.has(provider.name))
   )) ?? null;
   const activeAgent = createdAgent ?? agents[0] ?? null;

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/nextlevelbuilder/goclaw/internal/config"
+	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
 // fetchAnthropicModels calls the Anthropic models API.
@@ -188,4 +189,42 @@ func (h *ProvidersHandler) fetchOllamaModels(ctx context.Context, apiBase, apiKe
 		models = append(models, ModelInfo{ID: m.Name, Name: name})
 	}
 	return models, nil
+}
+
+// allowEmptyAPIKeyForProviderList is true for local OpenAI-compatible providers that use placeholder Bearer tokens at runtime.
+func allowEmptyAPIKeyForProviderList(p *store.LLMProviderData) bool {
+	switch p.ProviderType {
+	case store.ProviderOllama, store.ProviderVLLM:
+		return true
+	default:
+		return false
+	}
+}
+
+// openAIBearerForModels returns the Bearer token for OpenAI-compatible GET /v1/models.
+func openAIBearerForModels(p *store.LLMProviderData) string {
+	key := strings.TrimSpace(p.APIKey)
+	if key != "" {
+		return key
+	}
+	switch p.ProviderType {
+	case store.ProviderOllama:
+		return "ollama"
+	case store.ProviderVLLM:
+		return "-"
+	default:
+		return ""
+	}
+}
+
+// openAICompatModelsAPIBase returns the /v1 root used for listing models.
+func openAICompatModelsAPIBase(h *ProvidersHandler, p *store.LLMProviderData) string {
+	if p.ProviderType == store.ProviderVLLM {
+		return strings.TrimRight(config.ResolveVLLMOpenAIBase(p.APIBase), "/")
+	}
+	base := strings.TrimRight(h.resolveAPIBase(p), "/")
+	if base == "" {
+		return "https://api.openai.com/v1"
+	}
+	return base
 }

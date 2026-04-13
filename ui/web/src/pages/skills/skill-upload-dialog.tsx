@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { validateMultiSkillZip } from "./lib/validate-skill-zip";
 import { createSkillSubZip } from "./lib/create-skill-sub-zip";
 import { uniqueId } from "@/lib/utils";
-import type { SkillUploadResponse } from "./hooks/use-skills";
+import { isSingleSkillUploadResponse, type SkillUploadResponse } from "./hooks/use-skills";
 import type { FileEntry, SkillStatus } from "./lib/skill-upload-types";
 import { FileEntryBlock } from "./skill-upload-entry";
 import JSZip from "jszip";
@@ -142,6 +142,10 @@ export function SkillUploadDialog({ open, onOpenChange, onUpload }: SkillUploadD
         }
 
         const result = await onUpload(uploadFile);
+        if (!isSingleSkillUploadResponse(result)) {
+          // Per-skill sub-ZIPs should yield single-skill responses; ignore unexpected multi payloads.
+          continue;
+        }
 
         if (result.status === "unchanged") {
           setEntries((prev) =>
