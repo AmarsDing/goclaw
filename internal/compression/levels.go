@@ -7,6 +7,8 @@ package compression
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math"
@@ -105,6 +107,14 @@ func NewEngine(cfg Config, counter TokenCounter, compactor Compactor) *Engine {
 	}
 }
 
+// FoldEntry records one collapse step for telemetry and optional audit replay.
+type FoldEntry struct {
+	Level         Level     `json:"level"`
+	FoldedDigest  string    `json:"folded_digest"` // SHA-256 hex of pre-fold message bodies
+	FoldedMsgCount int      `json:"folded_msg_count"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
 // Result describes what the engine did.
 type Result struct {
 	Messages        []providers.Message
@@ -115,6 +125,18 @@ type Result struct {
 	Duration        time.Duration
 	TruncatedTools  int
 	CompactedPrefix bool
+	FoldLog         []FoldEntry `json:"fold_log,omitempty"`
+}
+
+func digestMessages(msgs []providers.Message) string {
+	h := sha256.New()
+	for _, m := range msgs {
+		h.Write([]byte(m.Role))
+		h.Write([]byte{0})
+		h.Write([]byte(m.Content))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // CompactableTools is the default whitelist for micro- and snip-compaction.
@@ -157,6 +179,7 @@ func (e *Engine) CompressToBudget(ctx context.Context, msgs []providers.Message,
 
 	current := cloneMessages(msgs)
 	applied := make([]Level, 0, 5)
+	var foldLog []FoldEntry
 	totalTruncated := 0
 	compactedPrefix := false
 
@@ -166,6 +189,7 @@ func (e *Engine) CompressToBudget(ctx context.Context, msgs []providers.Message,
 			continue
 		}
 
+		beforeFold := cloneMessages(current)
 		var next []providers.Message
 		var truncated int
 		var collapsed bool
@@ -188,6 +212,15 @@ func (e *Engine) CompressToBudget(ctx context.Context, msgs []providers.Message,
 		}
 		if !messagesChanged(current, next) {
 			continue
+		}
+
+		if collapsed && (level == L3ContextCollapse || level == L4CacheReset) {
+			foldLog = append(foldLog, FoldEntry{
+				Level:          level,
+				FoldedDigest:   digestMessages(beforeFold),
+				FoldedMsgCount: len(beforeFold),
+				Timestamp:      time.Now(),
+			})
 		}
 
 		current = next
@@ -214,6 +247,7 @@ func (e *Engine) CompressToBudget(ctx context.Context, msgs []providers.Message,
 		Duration:        time.Since(start),
 		TruncatedTools:  totalTruncated,
 		CompactedPrefix: compactedPrefix,
+		FoldLog:         foldLog,
 	}, true, nil
 }
 
@@ -340,9 +374,15 @@ func (e *Engine) applyL3(ctx context.Context, msgs []providers.Message) ([]provi
 	if e.compact == nil {
 		out := make([]providers.Message, 0, len(msgs))
 		out = append(out, msgs[:1]...)
+		now := time.Now()
 		out = append(out, providers.Message{
 			Role:    "system",
 			Content: "[context collapse] Earlier conversation was collapsed to preserve budget.",
+			CompactBoundary: &providers.CompactMeta{
+				Level:         "L3",
+				OriginalCount: lastUser,
+				CompactedAt:   now,
+			},
 		})
 		out = append(out, msgs[lastUser:]...)
 		return out, true, nil
@@ -379,11 +419,13 @@ func (e *Engine) applyL4(ctx context.Context, msgs []providers.Message) ([]provi
 		}
 	}
 	if lastUserIdx >= 0 {
-		// Inject a summary of what came before.
+		// Inject a summary of what came before. Leading system messages are already in
+		// `out`; pass only the non-system prefix so the compactor does not duplicate them.
 		if e.compact != nil {
 			before := msgs[:lastUserIdx]
-			if len(before) > 0 {
-				compacted, err := e.compact(ctx, before)
+			rest := skipLeadingSystemRoles(before)
+			if len(rest) > 0 {
+				compacted, err := e.compact(ctx, cloneMessages(rest))
 				if err == nil {
 					out = append(out, compacted...)
 				}
@@ -432,6 +474,14 @@ func buildToolNameMap(msgs []providers.Message) map[string]string {
 		}
 	}
 	return toolNames
+}
+
+func skipLeadingSystemRoles(msgs []providers.Message) []providers.Message {
+	i := 0
+	for i < len(msgs) && msgs[i].Role == "system" {
+		i++
+	}
+	return msgs[i:]
 }
 
 func cloneMessages(msgs []providers.Message) []providers.Message {

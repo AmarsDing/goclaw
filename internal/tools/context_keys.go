@@ -31,6 +31,7 @@ const (
 	ctxAgentKey    toolContextKey = "tool_agent_key"
 	ctxSessionKey  toolContextKey = "tool_session_key" // origin session key for announce routing
 	ctxRunKind     toolContextKey = "tool_run_kind"    // "notification", "announce", "delegation"
+	ctxRunID       toolContextKey = "tool_run_id"      // parent agent run id (for hooks / delegation)
 )
 
 // Well-known channel names used for routing and access control.
@@ -44,6 +45,20 @@ const (
 // Used by media analysis tools (read_document, read_audio, read_video).
 type MediaPathLoader interface {
 	LoadPath(id string) (string, error)
+}
+
+// WithToolRunID attaches the current agent run ID for tools that need it (hooks, delegate).
+func WithToolRunID(ctx context.Context, runID string) context.Context {
+	if runID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxRunID, runID)
+}
+
+// ToolRunIDFromCtx returns the run ID injected for this tool execution, if any.
+func ToolRunIDFromCtx(ctx context.Context) string {
+	v, _ := ctx.Value(ctxRunID).(string)
+	return v
 }
 
 func WithToolChannel(ctx context.Context, channel string) context.Context {

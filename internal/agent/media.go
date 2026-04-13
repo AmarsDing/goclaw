@@ -16,6 +16,22 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 )
 
+// isAllowedMediaSource returns true if path is permitted as a media source.
+// Allowed locations: the user's workspace, or os.TempDir() (for files uploaded
+// via POST /v1/media/upload which saves to tmp with a "ws_upload_*" prefix).
+// This prevents WS clients from referencing arbitrary server-side paths.
+func isAllowedMediaSource(path, workspace string) bool {
+	cleanPath := filepath.Clean(path)
+	if workspace != "" {
+		cleanWs := filepath.Clean(workspace)
+		if cleanPath == cleanWs || strings.HasPrefix(cleanPath, cleanWs+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	cleanTmp := filepath.Clean(os.TempDir())
+	return cleanPath == cleanTmp || strings.HasPrefix(cleanPath, cleanTmp+string(os.PathSeparator))
+}
+
 // maxImageBytes is the safety limit for reading image files (10MB).
 const maxImageBytes = 10 * 1024 * 1024
 
@@ -79,6 +95,14 @@ func (l *Loop) persistMedia(sessionKey string, files []bus.MediaFile, workspace 
 
 	var refs []providers.MediaRef
 	for _, f := range files {
+		// Security: reject paths outside workspace or system temp dir to prevent
+		// WebSocket clients from reading arbitrary server-side files.
+		if !isAllowedMediaSource(f.Path, workspace) {
+			slog.Warn("media: source path outside allowed boundary, skipping",
+				"path", f.Path, "workspace", workspace)
+			continue
+		}
+
 		mime := f.MimeType
 		if mime == "" {
 			mime = mimeFromExt(filepath.Ext(f.Path))

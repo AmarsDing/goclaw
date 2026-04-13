@@ -24,6 +24,9 @@ func (e *gatewayHTTPError) Error() string {
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
+// marketplaceUploadClient allows large ZIP uploads; retries use neterr in marketplace.UploadPackageHTTP.
+var marketplaceUploadClient = &http.Client{Timeout: 6 * time.Minute}
+
 // healthClient has a shorter timeout for quick health checks.
 var healthClient = &http.Client{Timeout: 3 * time.Second}
 

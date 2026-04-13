@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"log/slog"
 	"mime"
+	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -50,26 +53,61 @@ var BridgeToolNames = map[string]bool{
 	"team_tasks": true,
 }
 
-// NewBridgeServer creates a StreamableHTTPServer that exposes GoClaw tools as MCP tools.
+// BridgeServer wraps a StreamableHTTPServer and allows atomic tool list refresh.
+// Use RefreshTools() when the tool registry changes (e.g. after plugin activation).
+// The server is stateless (WithStateLess) so each request picks up the current snapshot.
+type BridgeServer struct {
+	reg     *tools.Registry
+	msgBus  *bus.MessageBus
+	version string
+
+	mu     sync.Mutex
+	active atomic.Pointer[mcpserver.StreamableHTTPServer]
+}
+
+// NewBridgeServer creates a BridgeServer that exposes GoClaw tools as MCP tools.
 // It reads tools from the registry, filters to BridgeToolNames, and serves them
 // over streamable-http transport (stateless mode).
 // msgBus is optional; when non-nil, tools that produce media (deliver:true) will
 // publish file attachments directly to the outbound bus.
-func NewBridgeServer(reg *tools.Registry, version string, msgBus *bus.MessageBus) *mcpserver.StreamableHTTPServer {
-	srv := mcpserver.NewMCPServer("goclaw-bridge", version,
+func NewBridgeServer(reg *tools.Registry, version string, msgBus *bus.MessageBus) *BridgeServer {
+	s := &BridgeServer{reg: reg, msgBus: msgBus, version: version}
+	s.active.Store(s.build())
+	return s
+}
+
+// ServeHTTP delegates to the currently active StreamableHTTPServer.
+func (s *BridgeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.active.Load().ServeHTTP(w, r)
+}
+
+// RefreshTools rebuilds the underlying MCP server from the current registry state.
+// Safe to call concurrently; the active server is swapped atomically so in-flight
+// requests continue to use the previous snapshot.
+func (s *BridgeServer) RefreshTools() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active.Store(s.build())
+	slog.Info("mcp.bridge: tool list refreshed")
+}
+
+// build creates a new StreamableHTTPServer from the current registry snapshot.
+// Must NOT be called with mu held by the same goroutine (mu is acquired in RefreshTools).
+func (s *BridgeServer) build() *mcpserver.StreamableHTTPServer {
+	srv := mcpserver.NewMCPServer("goclaw-bridge", s.version,
 		mcpserver.WithToolCapabilities(false),
 	)
 
 	// Register each safe tool from the GoClaw registry
 	var registered int
 	for name := range BridgeToolNames {
-		t, ok := reg.Get(name)
+		t, ok := s.reg.Get(name)
 		if !ok {
 			continue
 		}
 
 		mcpTool := convertToMCPTool(t)
-		handler := makeToolHandler(reg, name, msgBus)
+		handler := makeToolHandler(s.reg, name, s.msgBus)
 		srv.AddTool(mcpTool, handler)
 		registered++
 	}

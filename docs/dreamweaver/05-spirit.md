@@ -28,7 +28,7 @@
 | FR-R2 | **Agent 列表来源** | 路由可见的 Agent 至少包含 **当前 Loop 主 Agent** 与 **`delegateTargets`** 中的委托目标，以便建议与编排和真实可调用能力一致。 | `loop_dreamweaver.go` → `buildDreamWeaverPromptSections` |
 | FR-O1 | **Orchestrator** | 对 `Intent.SubTasks` 按 `DependsOn` 建图；无环依赖下 **并行执行就绪任务**；聚合为 `OrchestrationResult`；执行与合并通过接口注入，便于接真实 RPC/子 Agent。 | `orchestrator.go` |
 | FR-L1 | **Learning** | `RecordFeedback` 更新亲和度、可选 `applyCorrection`（降权错误 Agent、把纠错文本并入 `RecentTopics`）；进程内 `history` 有界；**持久化反馈流**可与审计/主题记忆后续对接。 | `learning.go` |
-| FR-I1 | **Loop 集成** | 在 `DreamWeaver` 总开关与 `spirit_enabled` 开启时，将精灵段落注入系统提示（意图、置信度、建议 Agent）；**画像存储**应可切换为 `PGSpiritProfileStore`（当前 Loop 仍为 `noopProfileStore`）。 | `DreamWeaverConfig.SpiritEnabled`，`loop_dreamweaver.go` |
+| FR-I1 | **Loop 集成** | 在 `DreamWeaver` 总开关与 `spirit_enabled` 开启时，将精灵段落注入系统提示（意图、置信度、建议 Agent）。**画像存储**：`runtimeDB != nil` 时使用 `PGSpiritProfileStore`，否则 `noopProfileStore`（与 `SpiritEnabled` **无**耦合——`SpiritEnabled` 只控制提示段与分类器，不切换 Store 类型）。 | `DreamWeaverConfig.SpiritEnabled`，`loop_dreamweaver.go` |
 | FR-I2 | **入口（产品）** | 独立「精灵对话」或仅精灵模式 **非必须**，但若提供：需约定会话归属同一 `user_id`/`tenant_id`，并复用上述 Profile/Router/Learning。 | 现状：无独立 CLI/Web 入口 |
 
 ### 非功能需求
@@ -37,24 +37,24 @@
 |----|------|
 | NFR-1 | **租户隔离**：所有画像与后续反馈记录以 `tenant_id` 为边界；禁止跨租户读写。 |
 | NFR-2 | **可观测**：路由失败回退、学习失败应打日志（已有 `slog`），关键路径不静默吞错导致画像长期不更新。 |
-| NFR-3 | **默认安全**：未启用 `SpiritEnabled` 时无额外提示块、不写库；`noop` 存储不持久化。 |
+| NFR-3 | **默认安全**：未启用 `SpiritEnabled` 时无精灵提示块；无 `runtimeDB` 时画像不持久化（noop）。有 DB 时画像可走 PG，与是否打开精灵提示 **独立**（若产品要求「仅 SpiritEnabled 才写画像」需另加门控）。 |
 | NFR-4 | **扩展点**：`IntentClassifier`、`AgentExecutor`、`ResultMerger` 可替换，便于接入模型分类器或外部 Agent 运行时。 |
 
 ### 验收与里程碑（建议）
 
 | 优先级 | 内容 |
 |--------|------|
-| **P0** | `SpiritEnabled` 且存在 DB 时，Loop 使用 `PGSpiritProfileStore`（或等价注入），画像在多次 Run 间可复现；`Save` 与 `Get` 与迁移表一致。 |
+| **P0** | 存在 **`runtimeDB`** 时，Loop 使用 `PGSpiritProfileStore`，画像在多次 Run 间可复现；`Save` 与 `Get` 与迁移表一致（**不要求**同时 `SpiritEnabled` 才启用 PG Store）。 |
 | **P1** | `RecordFeedback` 从真实 Run 结束路径或用户操作接入（非仅单测），并与持久化画像一致。 |
 | **P2** | `Orchestrator` 与主链路结合：对多子任务请求真正走并行执行（需 `AgentExecutor` 实现与委托语义对齐）。 |
 | **P3** | 独立精灵入口（CLI/Web）、多精灵/角色切换、与 `dreamweaver_topics` 或 consolidation 的显式同步。 |
 
 ### 已知缺口（与状态表一致）
 
-- **PG 已具备，Loop 未接线**：`PGSpiritProfileStore` 与表已存在；`Loop` 仍用 `noopProfileStore`，故跨进程/重启后画像不保留。
-- **学习未闭环**：`LearningLoop` 未接到网关/Web 的反馈 API，且反馈未落库。
-- **编排未接主链路**：`Orchestrator` 库完整，但主 Agent 路径未默认调用（当前 Spirit 仅增强 **提示块**）。
-- **分类器**：`NewRouter(nil)` 时无 LLM 分类，仅关键词回退；生产级需注入 `IntentClassifier`。
+- **画像门控（产品项）**：当前 **`runtimeDB != nil` 即用 PG**，未要求 `SpiritEnabled` 与 Store 绑定；若需「仅开启精灵时才持久化画像」需在 `initDreamWeaverServices` 增加条件。
+- **学习闭环**：`POST /v1/feedback` 与 `LearningLoop.RecordFeedback` **已** 接入；仍可按产品扩展 Run 结束自动上报、审计维度等。
+- **编排**：多 SubTask 时 **`Orchestrator` + `SpiritDelegateRunFn`** 已接主链路；复杂委托语义与失败重试仍可增强。
+- **分类器**：`spirit_enabled` 且 provider 可用时使用 **`NewLLMIntentClassifier`**；否则关键词回退。
 
 ---
 
@@ -95,7 +95,7 @@
 | `internal/spirit/router.go` | 🟢 已实现 | Router：根据 profile 路由到合适 agent |
 | `internal/spirit/learning.go` | 🟢 已实现 | LearningLoop：从交互中提取偏好更新 profile |
 | `internal/spirit/orchestrator.go` | 🟢 已实现 | Orchestrator：任务拆分 → 调度多个 agent |
-| PG Profile 持久化 | 🟡 部分实现 | `PGSpiritProfileStore` 存在但 Loop 仍用 `noopProfileStore` |
+| PG Profile 持久化 | 🟢 已实现 | `runtimeDB != nil` 时 Loop 使用 `PGSpiritProfileStore`（无 DB 时为 noop） |
 | 精灵指令界面 | 🔴 未实现 | 无独立的精灵对话入口（CLI / Web） |
-| 精灵成长/记忆 | 🔴 未实现 | learning 已有框架，但未接入长期记忆存储 |
+| 精灵成长/记忆 | 🟡 部分实现 | `LearningLoop` + PG 画像；纠错可 **`UpsertTopic`** 写入 `dreamweaver_topics`；与 consolidation 的显式产品化同步仍可增强 |
 | 多精灵管理 | 🔴 未实现 | 目前 per-user 单精灵，无精灵切换/多角色 |

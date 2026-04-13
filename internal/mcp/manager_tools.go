@@ -34,6 +34,25 @@ func (m *Manager) ToolNames() []string {
 	return names
 }
 
+// ServerInstructions returns a map of server name → instructions for servers
+// that provided a non-empty instructions field in their initialize response.
+// These are suitable for inclusion in the agent system prompt (P1-5).
+func (m *Manager) ServerInstructions() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result map[string]string
+	for name, ss := range m.servers {
+		if ss.instructions != "" {
+			if result == nil {
+				result = make(map[string]string)
+			}
+			result[name] = ss.instructions
+		}
+	}
+	return result
+}
+
 // ServerToolNames returns tool names for a specific server.
 func (m *Manager) ServerToolNames(serverName string) []string {
 	m.mu.RLock()

@@ -582,11 +582,11 @@ func TestPruneStage_EffectiveContextWindow_OverridesConfig(t *testing.T) {
 	}
 }
 
-// --- buildRecentContext tests (Phase 9) ---
+// --- RecentContextForRecall tests (Phase 9) ---
 
 func TestBuildRecentContext_EmptyHistory(t *testing.T) {
 	t.Parallel()
-	if got := buildRecentContext(nil); got != "" {
+	if got := RecentContextForRecall(nil); got != "" {
 		t.Errorf("empty history should return empty, got %q", got)
 	}
 }
@@ -598,7 +598,7 @@ func TestBuildRecentContext_SkipsNonUserMessages(t *testing.T) {
 		{Role: "assistant", Content: "hi back"},
 		{Role: "tool", Content: "tool output"},
 	}
-	got := buildRecentContext(hist)
+	got := RecentContextForRecall(hist)
 	if got != "hello" {
 		t.Errorf("should only include user messages, got %q", got)
 	}
@@ -613,7 +613,7 @@ func TestBuildRecentContext_CapsAtTwoTurns(t *testing.T) {
 		{Role: "assistant", Content: "reply"},
 		{Role: "user", Content: "third"},
 	}
-	got := buildRecentContext(hist)
+	got := RecentContextForRecall(hist)
 	// Should contain last two user turns ("second" and "third"), not "first"
 	if !strings.Contains(got, "second") {
 		t.Errorf("missing second turn, got %q", got)
@@ -632,7 +632,7 @@ func TestBuildRecentContext_PreservesTurnOrder(t *testing.T) {
 		{Role: "user", Content: "earlier"},
 		{Role: "user", Content: "later"},
 	}
-	got := buildRecentContext(hist)
+	got := RecentContextForRecall(hist)
 	// "earlier" should come before "later" in the output
 	earlierIdx := strings.Index(got, "earlier")
 	laterIdx := strings.Index(got, "later")
@@ -647,8 +647,8 @@ func TestBuildRecentContext_TruncatesLongMessages(t *testing.T) {
 	hist := []providers.Message{
 		{Role: "user", Content: long},
 	}
-	got := buildRecentContext(hist)
-	if len(got) > 300 {
+	got := RecentContextForRecall(hist)
+	if len([]rune(got)) > 300 {
 		t.Errorf("result should be capped at 300 chars, got %d", len(got))
 	}
 }
@@ -848,7 +848,7 @@ func TestToolStage_PartitionsParallelSafeTools(t *testing.T) {
 		ProcessToolResult: func(_ context.Context, _ *RunState, tc providers.ToolCall, rawMsg providers.Message, _ any) []providers.Message {
 			return []providers.Message{{Role: "tool", Content: "par:" + tc.Name, ToolCallID: rawMsg.ToolCallID}}
 		},
-		ToolConcurrencySafe: func(toolName string) bool {
+		ToolConcurrencySafe: func(toolName string, _ map[string]any) bool {
 			return toolName == "read_a" || toolName == "read_b"
 		},
 	}
@@ -900,6 +900,143 @@ func TestToolStage_LoopKilled_ReturnsBreakLoop(t *testing.T) {
 	}
 	if stage.Result() != BreakLoop {
 		t.Errorf("Result() = %v, want BreakLoop when LoopKilled", stage.Result())
+	}
+}
+
+// TestToolStage_SoftInterrupt_CancelGroupCancelled_BlockGroupCompletes verifies
+// that when InterruptCh fires during a parallel batch:
+//   - Tools whose context is passed through (InterruptCancel) see cancellation.
+//   - Tools whose context is context.WithoutCancel (InterruptBlock) run to completion.
+func TestToolStage_SoftInterrupt_CancelGroupCancelled_BlockGroupCompletes(t *testing.T) {
+	t.Parallel()
+
+	// blockDone is set when the "block" tool's ExecuteToolRaw finishes.
+	blockDone := make(chan struct{})
+	// interruptCh is the soft-interrupt signal channel.
+	interruptCh := make(chan struct{}, 1)
+
+	// Tracks which contexts were cancelled at execution time.
+	cancelCtxErr := make(chan error, 1)
+	blockCtxErr := make(chan error, 1)
+
+	deps := &PipelineDeps{
+		InterruptCh: interruptCh,
+		// ExecuteToolCall is required by the Execute guard even when the parallel path is taken.
+		ExecuteToolCall: func(_ context.Context, _ *RunState, _ providers.ToolCall) ([]providers.Message, error) {
+			return nil, nil
+		},
+		ExecuteToolRaw: func(ctx context.Context, tc providers.ToolCall) (providers.Message, any, error) {
+			if tc.Name == "cancel_tool" {
+				// Simulate: signal interrupt then wait for context cancellation.
+				interruptCh <- struct{}{}
+				<-ctx.Done() // batchCtx gets cancelled by the monitor goroutine
+				cancelCtxErr <- ctx.Err()
+				return providers.Message{Role: "tool", Content: "cancel_tool:cancelled", ToolCallID: tc.ID}, nil, nil
+			}
+			// "block_tool" uses context.WithoutCancel so it is unaffected.
+			// Wait until cancel_tool has signalled, then verify ctx is still alive.
+			<-blockDone // released by cancel_tool signalling (see below); use a sync point
+			blockCtxErr <- ctx.Err() // should be nil for WithoutCancel ctx
+			return providers.Message{Role: "tool", Content: "block_tool:done", ToolCallID: tc.ID}, nil, nil
+		},
+		ProcessToolResult: func(_ context.Context, _ *RunState, tc providers.ToolCall, rawMsg providers.Message, _ any) []providers.Message {
+			return []providers.Message{{Role: "tool", Content: rawMsg.Content, ToolCallID: rawMsg.ToolCallID}}
+		},
+		ToolConcurrencySafe: func(_ string, _ map[string]any) bool { return true },
+		// cancel_tool → InterruptCancel (inherits batchCtx); block_tool → InterruptBlock (WithoutCancel).
+		ToolInterruptBehavior: func(toolName string, _ map[string]any) string {
+			if toolName == "block_tool" {
+				return "block"
+			}
+			return "cancel"
+		},
+	}
+
+	// We need the pipeline's toolExecutionContext logic to respect ToolInterruptBehavior.
+	// Since that logic lives in agent.Loop, we simulate it inside ExecuteToolRaw by
+	// wrapping: block_tool → use WithoutCancel; cancel_tool → pass ctx through.
+	// Override ExecuteToolRaw to apply the wrapping ourselves.
+	rawFn := deps.ExecuteToolRaw
+	deps.ExecuteToolRaw = func(ctx context.Context, tc providers.ToolCall) (providers.Message, any, error) {
+		if tc.Name == "block_tool" {
+			// Simulate InterruptBlock: use context.WithoutCancel.
+			ctx = context.WithoutCancel(ctx)
+		}
+		return rawFn(ctx, tc)
+	}
+
+	// Sync point: block_tool waits until cancel_tool has signalled the interrupt.
+	// We close blockDone after the interrupt is signalled so block_tool can proceed.
+	go func() {
+		// Wait for interrupt signal to be sent (cancel_tool sends it, monitor picks it up).
+		// In practice, the monitor goroutine cancels batchCtx before cancel_tool unblocks.
+		// We give block_tool a small window to proceed after the interrupt is fired.
+		<-interruptCh // drain to let cancel_tool proceed (re-signal was already consumed by monitor)
+		close(blockDone)
+		// Re-signal so the monitor goroutine (still running) can consume it.
+		// Actually, the monitor already consumed it. The test helper above drains it;
+		// we close blockDone to unblock the block_tool goroutine.
+	}()
+
+	// Re-wire: the cancel_tool itself sends to interruptCh, but the monitor goroutine
+	// inside executeParallel will consume it. We need block_tool to also proceed.
+	// Simpler approach: use a separate sync channel.
+	readyCh := make(chan struct{})
+	interruptCh2 := make(chan struct{}, 1)
+	deps.InterruptCh = interruptCh2
+	deps.ExecuteToolRaw = func(ctx context.Context, tc providers.ToolCall) (providers.Message, any, error) {
+		if tc.Name == "block_tool" {
+			ctx = context.WithoutCancel(ctx)
+			// Wait until cancel_tool has sent the interrupt signal.
+			<-readyCh
+			blockCtxErr <- ctx.Err()
+			return providers.Message{Role: "tool", Content: "block_tool:done", ToolCallID: tc.ID}, nil, nil
+		}
+		// cancel_tool: signal interrupt, then wait for own context to be cancelled.
+		interruptCh2 <- struct{}{}
+		close(readyCh)     // let block_tool proceed
+		<-ctx.Done()       // wait for batchCtx cancel propagated by monitor
+		cancelCtxErr <- ctx.Err()
+		return providers.Message{Role: "tool", Content: "cancel_tool:cancelled", ToolCallID: tc.ID}, nil, nil
+	}
+
+	stage := NewToolStage(deps)
+	state := defaultState()
+	state.Think.LastResponse = &providers.ChatResponse{
+		ToolCalls: []providers.ToolCall{
+			{ID: "1", Name: "cancel_tool"},
+			{ID: "2", Name: "block_tool"},
+		},
+	}
+
+	if err := stage.Execute(context.Background(), state); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	// cancel_tool should have seen context.Canceled.
+	select {
+	case err := <-cancelCtxErr:
+		if err == nil {
+			t.Error("cancel_tool ctx should be cancelled after soft interrupt")
+		}
+	default:
+		t.Error("cancel_tool never sent its ctx.Err()")
+	}
+
+	// block_tool should have seen nil ctx.Err() (WithoutCancel).
+	select {
+	case err := <-blockCtxErr:
+		if err != nil {
+			t.Errorf("block_tool ctx.Err() = %v, want nil (WithoutCancel)", err)
+		}
+	default:
+		t.Error("block_tool never sent its ctx.Err()")
+	}
+
+	// Both tools should have produced results.
+	pending := state.Messages.Pending()
+	if len(pending) != 2 {
+		t.Fatalf("pending = %d messages, want 2", len(pending))
 	}
 }
 

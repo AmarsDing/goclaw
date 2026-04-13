@@ -24,6 +24,30 @@ type ConcurrencySafeTool interface {
 	IsConcurrencySafe() bool
 }
 
+// ConcurrencySafeWithArgsTool is an extension of ConcurrencySafeTool that
+// performs input-aware concurrency safety checks. This mirrors Claude Code's
+// isConcurrencySafe(input) pattern: a tool like Bash might be safe for `ls`
+// but unsafe for `rm -rf`. When a tool implements this interface, the registry
+// calls it instead of (or in addition to) the static IsConcurrencySafe() method.
+type ConcurrencySafeWithArgsTool interface {
+	IsConcurrencySafeWithArgs(args map[string]any) bool
+}
+
+// InterruptBehavior describes how a tool reacts when the user interrupts the run
+// while the tool is executing (Claude Code parity: cancel vs block).
+type InterruptBehavior string
+
+const (
+	InterruptCancel InterruptBehavior = "cancel" // cancel tool execution
+	InterruptBlock  InterruptBehavior = "block"  // wait for tool to finish before new input
+)
+
+// InterruptBehaviorTool allows a tool to declare its interrupt policy.
+// Default when not implemented: InterruptCancel.
+type InterruptBehaviorTool interface {
+	InterruptBehavior() InterruptBehavior
+}
+
 // ContextualTool receives channel/chat context before execution.
 type ContextualTool interface {
 	Tool

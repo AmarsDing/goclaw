@@ -42,6 +42,8 @@ export const ROUTES = {
   PACKAGES: "/packages",
   MARKETPLACE: "/marketplace",
   MARKETPLACE_DETAIL: "/marketplace/:id",
+  DREAMWEAVER: "/dreamweaver",
+  DREAMWEAVER_WORKSHOP: "/dreamweaver/workshop",
   TENANTS: "/admin/tenants",
   TENANT_DETAIL: "/admin/tenants/:id",
   SETUP: "/setup",

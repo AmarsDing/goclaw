@@ -161,25 +161,14 @@ func (g *Generator) buildManifest(analysis *RepoAnalysis, name string) plugins.M
 
 func (g *Generator) generateGoWrapper(dir string, analysis *RepoAnalysis, name string) (string, error) {
 	path := filepath.Join(dir, "wrapper.go")
-	content := fmt.Sprintf(`package main
-
-import (
-	"fmt"
-	"os"
-)
-
-// Auto-generated wrapper for %s
-// Source: %s
-
-func main() {
-	fmt.Fprintf(os.Stderr, "%s plugin started\n")
-	// TODO: Implement MCP stdio bridge for %s
-	// Read JSON-RPC from stdin, dispatch to wrapped functionality, write results to stdout.
-	select {}
-}
-`, analysis.Name, analysis.URL, name, analysis.Name)
-
-	return path, os.WriteFile(path, []byte(content), 0o644)
+	var b strings.Builder
+	b.WriteString("package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\n")
+	b.WriteString(fmt.Sprintf("// Auto-generated wrapper for %s\n// Source: %s\n\n", analysis.Name, analysis.URL))
+	b.WriteString("func main() {\n\t")
+	b.WriteString(fmt.Sprintf("fmt.Fprintf(os.Stderr, \"%%s plugin wrapper started\\n\", %q)\n", name))
+	b.WriteString(fmt.Sprintf("\t// TODO: MCP stdio bridge for %s\n", analysis.Name))
+	b.WriteString("\tselect {}\n}\n")
+	return path, os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 func (g *Generator) generatePythonWrapper(dir string, analysis *RepoAnalysis, name string) (string, error) {

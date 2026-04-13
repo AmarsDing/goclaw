@@ -57,6 +57,15 @@ func (l *Loop) buildMCPToolDescs(toolNames []string) map[string]string {
 	return descs
 }
 
+// buildMCPServerInstructions returns server-level instructions from connected MCP servers.
+// Returns nil when no MCPManager is set or no server declared instructions.
+func (l *Loop) buildMCPServerInstructions() map[string]string {
+	if l.mcpManager == nil {
+		return nil
+	}
+	return l.mcpManager.ServerInstructions()
+}
+
 // buildGroupWriterPrompt builds the system prompt section for group file writer restrictions.
 // For non-writers: injects refusal instructions + removes SOUL.md/AGENTS.md from context files.
 func (l *Loop) buildGroupWriterPrompt(ctx context.Context, groupID, senderID string, files []bootstrap.ContextFile) (string, []bootstrap.ContextFile) {

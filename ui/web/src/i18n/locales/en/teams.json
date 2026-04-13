@@ -18,6 +18,24 @@
     "description": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
     "confirmLabel": "Delete"
   },
+  "card": {
+    "publish": "Publish",
+    "published": "Published"
+  },
+  "publishDialog": {
+    "title": "Publish team to marketplace",
+    "description": "Package this team’s export (members, tasks, and agent bundles) as team-export.tar.gz inside a zip. Confirm to upload and mark the team as published.",
+    "name": "Listing name",
+    "longDescription": "Description",
+    "version": "Version",
+    "license": "License",
+    "author": "Author",
+    "authorPlaceholder": "Optional — defaults to team name",
+    "force": "Overwrite if a package with this ID already exists (republish)",
+    "cancel": "Cancel",
+    "confirm": "Publish",
+    "submitting": "Publishing…"
+  },
   "detail": {
     "lead": "Lead",
     "memberCount": "{{count}} member",
@@ -342,7 +360,9 @@
     "failedRejectTask": "Failed to reject task",
     "failedBulkDeleteTasks": "Failed to delete tasks",
     "workspaceFileDeleted": "File deleted",
-    "failedDeleteWorkspaceFile": "Failed to delete file"
+    "failedDeleteWorkspaceFile": "Failed to delete file",
+    "published": "Published to marketplace",
+    "publishFailed": "Failed to publish team"
   },
   "board": {
     "kanban": "Board",

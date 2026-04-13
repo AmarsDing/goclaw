@@ -28,6 +28,16 @@ func (s *ThinkStage) Result() StageResult { return s.result }
 func (s *ThinkStage) Execute(ctx context.Context, state *RunState) error {
 	s.result = Continue
 
+	// 0. Memory drift: count tool-loop iterations after L0 injection (ContextStage).
+	if state.Iteration >= 1 {
+		if s.deps.MemoryDriftTick != nil {
+			s.deps.MemoryDriftTick()
+		}
+		if s.deps.MemoryDriftCheck != nil {
+			_ = s.deps.MemoryDriftCheck(ctx, state)
+		}
+	}
+
 	// 1. Iteration budget nudges (70% / 90%)
 	s.maybeInjectNudge(state)
 

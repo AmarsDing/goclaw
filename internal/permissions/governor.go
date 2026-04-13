@@ -42,6 +42,19 @@ const (
 	ActionAsk   PermissionAction = "ask" // requires user approval
 )
 
+// DecisionSource identifies which layer produced the final PermissionDecision (telemetry / UX).
+type DecisionSource string
+
+const (
+	SourceRule         DecisionSource = "rule"
+	SourceToolChecker  DecisionSource = "tool_checker"
+	SourceSafety       DecisionSource = "safety"
+	SourceMode         DecisionSource = "mode"
+	SourceClassifier   DecisionSource = "classifier"
+	SourceHeadless     DecisionSource = "headless"
+	SourceApproval     DecisionSource = "approval"
+)
+
 // PermissionRule is a persistent rule that controls tool access.
 type PermissionRule struct {
 	ID       string           `json:"id"`
@@ -86,6 +99,7 @@ type PermissionDecision struct {
 	Classification *SecurityClassification `json:"classification,omitempty"`
 	AuditID        string                  `json:"audit_id"`
 	EvaluatedAt    time.Time               `json:"evaluated_at"`
+	Source         DecisionSource          `json:"source,omitempty"`
 }
 
 // AuditEntry records a permission decision for compliance and review.
@@ -120,6 +134,9 @@ type Governor struct {
 	ApprovalFunc func(ctx context.Context, req PermissionRequest, class *SecurityClassification) (bool, error)
 	ToolChecker  ToolPermissionChecker
 	SafetyCheck  SafetyChecker
+
+	// onModeChange is optional; invoked after SwitchMode updates the mode map.
+	onModeChange func(agentID string, prev, next AgentMode, reason string)
 }
 
 // GovernorHook is called before/after permission decisions.
@@ -175,6 +192,12 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 	safetyCheck := g.SafetyCheck
 	g.mu.RUnlock()
 
+	// Layer 3: classify concurrently with pre-hooks (warm path for future LLM classifiers).
+	classCh := make(chan *SecurityClassification, 1)
+	go func() {
+		classCh <- g.classifier.Classify(req.ToolName, req.Arguments)
+	}()
+
 	// Layer 4a: Pre-hooks
 	for _, h := range hooks {
 		if h.PreEvaluate != nil {
@@ -184,8 +207,7 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 		}
 	}
 
-	// Layer 3: Classify the tool call
-	class := g.classifier.Classify(req.ToolName, req.Arguments)
+	class := <-classCh
 	mode := g.getMode(req.AgentID)
 
 	// Layer 1a: deny rules always win.
@@ -213,7 +235,7 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 			return nil, fmt.Errorf("tool permission check: %w", err)
 		}
 		if toolVerdict != nil && toolVerdict.Action == ActionDeny {
-			dec := g.newDecision(req, mode, class, ActionDeny, "tool check: "+toolVerdict.Reason, nil)
+			dec := g.newDecision(req, mode, class, ActionDeny, "tool check: "+toolVerdict.Reason, nil, SourceToolChecker)
 			g.recordAndNotify(ctx, req, dec, hooks)
 			return dec, nil
 		}
@@ -225,7 +247,7 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 		return contentAskRule, nil
 	}
 	if toolVerdict != nil && toolVerdict.Action == ActionAsk {
-		dec := g.newDecision(req, mode, class, ActionAsk, "tool check: "+toolVerdict.Reason, nil)
+		dec := g.newDecision(req, mode, class, ActionAsk, "tool check: "+toolVerdict.Reason, nil, SourceToolChecker)
 		g.recordAndNotify(ctx, req, dec, hooks)
 		return dec, nil
 	}
@@ -241,7 +263,7 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 			return nil, fmt.Errorf("safety check: %w", err)
 		}
 		if verdict != nil && verdict.Action != "" && verdict.Action != ActionAllow {
-			dec := g.newDecision(req, mode, class, verdict.Action, "safety: "+verdict.Reason, nil)
+			dec := g.newDecision(req, mode, class, verdict.Action, "safety: "+verdict.Reason, nil, SourceSafety)
 			g.recordAndNotify(ctx, req, dec, hooks)
 			return dec, nil
 		}
@@ -262,19 +284,30 @@ func (g *Governor) Evaluate(ctx context.Context, req PermissionRequest) (*Permis
 		action = ActionAllow
 	}
 
-	dec := g.newDecision(req, mode, class, action, fmt.Sprintf("mode=%s class=%s", mode, class.Class), nil)
+	source := SourceMode
+	if contentAllowRule != nil || allowRule != nil {
+		source = SourceRule
+	}
+	dec := g.newDecision(req, mode, class, action, fmt.Sprintf("mode=%s class=%s", mode, class.Class), nil, source)
 	g.recordAndNotify(ctx, req, dec, hooks)
 	return dec, nil
 }
 
 // ResolveApproval converts an ask decision into allow/deny when an interactive
-// approval function is configured.
+// approval function is configured. When ApprovalFunc is nil (headless / API without UI),
+// ask is converted to deny so the pipeline never leaves a dangling ActionAsk.
 func (g *Governor) ResolveApproval(ctx context.Context, req PermissionRequest, dec *PermissionDecision) (*PermissionDecision, error) {
 	if dec == nil || dec.Action != ActionAsk {
 		return dec, nil
 	}
 	if g.ApprovalFunc == nil {
-		return dec, nil
+		resolved := *dec
+		resolved.Action = ActionDeny
+		resolved.Allowed = false
+		resolved.Reason = "headless: no interactive approval configured"
+		resolved.Source = SourceHeadless
+		resolved.EvaluatedAt = time.Now()
+		return &resolved, nil
 	}
 	approved, err := g.ApprovalFunc(ctx, req, dec.Classification)
 	if err != nil {
@@ -285,13 +318,22 @@ func (g *Governor) ResolveApproval(ctx context.Context, req PermissionRequest, d
 		resolved.Action = ActionAllow
 		resolved.Allowed = true
 		resolved.Reason = "approved: " + dec.Reason
+		resolved.Source = SourceApproval
 	} else {
 		resolved.Action = ActionDeny
 		resolved.Allowed = false
 		resolved.Reason = "rejected: " + dec.Reason
+		resolved.Source = SourceApproval
 	}
 	resolved.EvaluatedAt = time.Now()
 	return &resolved, nil
+}
+
+// SetOnModeChange registers a callback invoked after each successful SwitchMode.
+func (g *Governor) SetOnModeChange(fn func(agentID string, prev, next AgentMode, reason string)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.onModeChange = fn
 }
 
 // SetToolChecker sets the tool-specific checker.
@@ -336,6 +378,7 @@ func (g *Governor) newDecision(
 	action PermissionAction,
 	reason string,
 	rule *PermissionRule,
+	source DecisionSource,
 ) *PermissionDecision {
 	return &PermissionDecision{
 		Allowed:        action == ActionAllow,
@@ -345,6 +388,7 @@ func (g *Governor) newDecision(
 		Mode:           mode,
 		Classification: class,
 		EvaluatedAt:    time.Now(),
+		Source:         source,
 	}
 }
 
@@ -395,7 +439,7 @@ func (g *Governor) evaluateRules(
 	if mode == "" {
 		mode = ModeStandard
 	}
-	return g.newDecision(req, mode, class, best.Action, fmt.Sprintf("rule %s: %s", best.ID, best.Comment), best)
+	return g.newDecision(req, mode, class, best.Action, fmt.Sprintf("rule %s: %s", best.ID, best.Comment), best, SourceRule)
 }
 
 func ruleMatches(r *PermissionRule, req PermissionRequest) bool {
@@ -467,9 +511,13 @@ func (g *Governor) SwitchMode(agentID string, next AgentMode, reason string) Age
 		prev = ModeStandard
 	}
 	g.modes[agentID] = next
+	cb := g.onModeChange
 	g.mu.Unlock()
 	slog.Info("permission mode switched",
 		"agent", agentID, "from", prev, "to", next, "reason", reason)
+	if cb != nil {
+		cb(agentID, prev, next, reason)
+	}
 	return prev
 }
 

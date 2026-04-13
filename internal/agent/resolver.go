@@ -128,6 +128,10 @@ type ResolverDeps struct {
 	// SpiritDelegateRunFn enables multi-agent orchestration from the Spirit layer.
 	// When set, the spirit orchestrator uses this function to delegate sub-tasks.
 	SpiritDelegateRunFn tools.DelegateRunFunc
+
+	// OnToolRegistryChange is called after a plugin activates or deactivates.
+	// Allows infrastructure (e.g. MCP bridge) to refresh its tool snapshot. Optional.
+	OnToolRegistryChange func()
 }
 
 // NewManagedResolver creates a ResolverFunc that builds Loops from DB agent data.
@@ -295,6 +299,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 		// (even those without MCP grants), because FilterTools reads from registry.List().
 		hasMCPTools := false
 		var mcpUserCredSrvs []store.MCPAccessInfo
+		var mcpMgr *mcpbridge.Manager
 		if deps.MCPStore != nil {
 			if toolsReg == deps.Tools {
 				toolsReg = deps.Tools.Clone()
@@ -304,7 +309,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			if deps.MCPPool != nil {
 				mcpOpts = append(mcpOpts, mcpbridge.WithPool(deps.MCPPool))
 			}
-			mcpMgr := mcpbridge.NewManager(toolsReg, mcpOpts...)
+			mcpMgr = mcpbridge.NewManager(toolsReg, mcpOpts...)
 			if err := mcpMgr.LoadForAgent(ctx, ag.ID, ""); err != nil {
 				slog.Warn("failed to load MCP servers for agent", "agent", agentKey, "error", err)
 			} else {
@@ -326,6 +331,15 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 					}
 				}
 			}
+		} else if deps.MCPPool != nil {
+			// Pool without DB-backed MCP store: still attach a Manager so plugin MCP
+			// (ConnectPluginMCPServers) can use shared Pool.Acquire. Clone registry to
+			// avoid cross-agent tool leaks, same as DB-backed path.
+			if toolsReg == deps.Tools {
+				toolsReg = deps.Tools.Clone()
+			}
+			mcpMgr = mcpbridge.NewManager(toolsReg, mcpbridge.WithPool(deps.MCPPool))
+			_ = mcpMgr.LoadForAgent(ctx, ag.ID, "") // no-op when store is nil
 		}
 
 		// Per-agent memory: enabled if global memory manager exists AND
@@ -488,6 +502,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			TeamStore:              deps.TeamStore,
 			SecureCLIStore:         deps.SecureCLIStore,
 			OnTextUploaded:         deps.OnTextUploaded,
+			OnToolRegistryChange:   deps.OnToolRegistryChange,
 			MediaStore:             deps.MediaStore,
 			ModelPricing:           deps.ModelPricing,
 			BudgetMonthlyCents:     derefInt(ag.BudgetMonthlyCents),
@@ -496,6 +511,7 @@ func NewManagedResolver(deps ResolverDeps) ResolverFunc {
 			MCPStore:               deps.MCPStore,
 			MCPPool:                deps.MCPPool,
 			MCPUserCredSrvs:        mcpUserCredSrvs,
+			MCPManager:             mcpMgr,
 			OrchMode:               orchMode,
 			DelegateTargets:        delegateTargets,
 			EvolutionMetricsStore:  evoMetricsStore,

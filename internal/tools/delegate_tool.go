@@ -11,8 +11,12 @@ import (
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
+	"github.com/nextlevelbuilder/goclaw/internal/hooks"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
+
+// asyncDelegateTimeout is the maximum lifetime of a background async delegation goroutine.
+const asyncDelegateTimeout = 10 * time.Minute
 
 // DelegateResult carries the delegatee's response content and any media produced.
 type DelegateResult struct {
@@ -168,6 +172,9 @@ func (t *DelegateTool) executeSyncMode(ctx context.Context, req DelegateRequest,
 	syncCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
+	fireDelegateSubagentHooks(ctx, true, req)
+	defer fireDelegateSubagentHooks(ctx, false, req)
+
 	dr, err := t.runFn(syncCtx, req)
 	if err != nil {
 		t.emitEvent(ctx, eventbus.EventDelegateFailed, eventbus.DelegateFailedPayload{
@@ -200,11 +207,13 @@ func (t *DelegateTool) executeSyncMode(ctx context.Context, req DelegateRequest,
 
 // executeAsyncMode spawns a goroutine and returns immediately.
 func (t *DelegateTool) executeAsyncMode(ctx context.Context, req DelegateRequest) *Result {
+	fireDelegateSubagentHooks(ctx, true, req)
 	// Detach from parent cancel but add a deadline to prevent goroutine leaks.
-	bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+	bgCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), asyncDelegateTimeout)
 
 	go func() {
 		defer cancel()
+		defer fireDelegateSubagentHooks(context.WithoutCancel(ctx), false, req)
 		dr, err := t.runFn(bgCtx, req)
 		if err != nil {
 			t.emitEvent(bgCtx, eventbus.EventDelegateFailed, eventbus.DelegateFailedPayload{
@@ -276,5 +285,21 @@ func (t *DelegateTool) emitEvent(ctx context.Context, eventType eventbus.EventTy
 		Timestamp: time.Now().UTC(),
 		Payload:   payload,
 	})
+}
+
+func fireDelegateSubagentHooks(ctx context.Context, start bool, req DelegateRequest) {
+	fn := hooks.HookFireFromContext(ctx)
+	if fn == nil {
+		return
+	}
+	runID := ToolRunIDFromCtx(ctx)
+	ev := hooks.EventSubagentStart
+	if !start {
+		ev = hooks.EventSubagentStop
+	}
+	_, _ = fn(ctx, hooks.NewPayload(
+		ev, runID, req.FromAgentKey, req.SessionKey,
+		hooks.SubagentPayload{SubagentID: req.DelegationID, SubagentKind: "delegation", ParentRunID: runID},
+	))
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,22 @@ func (l *Loop) initDreamWeaverServices() {
 	l.lifecycleMgr = lifecycle.NewManager(l.domainBus)
 	l.hookRegistry = hooks.NewRegistry()
 	l.governor = permissions.NewGovernor()
+	l.governor.SetSafetyCheck(permissions.DefaultSafetyChecker())
+	l.governor.SetOnModeChange(func(agentID string, prev, next permissions.AgentMode, reason string) {
+		if !l.sdkBridgeEnabled() || l.sdkBridge == nil {
+			return
+		}
+		l.sdkBridge.Emit(sdk.Event{
+			Type:       sdk.EventPermissionModeChange,
+			AgentID:    l.id,
+			Data: sdk.PermissionModeChangeData{
+				AgentID: agentID,
+				OldMode: string(prev),
+				NewMode: string(next),
+				Reason:  reason,
+			},
+		})
+	})
 	l.resumeEng = resume.NewEngine()
 	l.sdkBridge = sdk.NewBridge()
 	l.pluginRegistry = plugins.NewRegistry(filepath.Join(l.dataDir, "plugins"))
@@ -65,12 +82,17 @@ func (l *Loop) initDreamWeaverServices() {
 		exec := &delegateAgentExecutor{
 			runFn:        l.spiritDelegateRunFn,
 			fromAgentKey: l.id,
+			loop:         l,
 		}
 		l.spiritOrchestrator = spirit.NewOrchestrator(exec, nil)
 	}
 	l.learningLoop = spirit.NewLearningLoop(l.profileMgr)
 	if l.runtimeDB != nil {
 		l.learningLoop.BindTopicStore(pgstore.NewPGTopicStore(l.runtimeDB), l.agentUUID.String())
+	}
+	var compactor compression.Compactor
+	if l.provider != nil {
+		compactor = l.compressionCompactor
 	}
 	l.compressionEng = compression.NewEngine(
 		compression.DefaultConfig(),
@@ -81,7 +103,7 @@ func (l *Loop) initDreamWeaverServices() {
 			}
 			return total
 		},
-		nil,
+		compactor,
 	)
 	l.loadDreamWeaverHooks(context.Background())
 
@@ -103,18 +125,43 @@ func (l *Loop) initDreamWeaverServices() {
 	if l.pluginsEnabled() && l.pluginRegistry != nil {
 		registry, ok := l.tools.(*tools.Registry)
 		if ok && l.dataDir != "" {
-			l.pluginRegistry.OnActivate(func(inst *plugins.Instance) error {
-				for _, decl := range inst.Manifest.Capabilities.Tools {
-					registry.Register(pluginRuntimeTool{
-						name:        decl.Name,
-						description: decl.Description,
-						parameters:  decl.Parameters,
-						pluginName:  inst.Manifest.Name,
-						registry:    l.pluginRegistry,
-					})
+		hookReg := l.hookRegistry
+		l.pluginRegistry.OnDeactivate(func(inst *plugins.Instance) error {
+			if l.mcpManager != nil {
+				l.mcpManager.DisconnectPluginMCPServers(inst.Manifest.Name)
+			}
+			// Notify bridge and other infrastructure that the tool registry changed.
+			if l.onToolRegistryChange != nil {
+				l.onToolRegistryChange()
+			}
+			return nil
+		})
+		l.pluginRegistry.OnActivate(func(inst *plugins.Instance) error {
+			if l.mcpManager != nil && len(inst.Manifest.Capabilities.MCPServers) > 0 {
+				if err := l.mcpManager.ConnectPluginMCPServers(context.Background(), l.tenantID, inst.Manifest.Name, inst.Manifest.Capabilities.MCPServers); err != nil {
+					return err
 				}
-				return nil
-			})
+			}
+			// Register plugin-contributed tools.
+			for _, decl := range inst.Manifest.Capabilities.Tools {
+				registry.Register(pluginRuntimeTool{
+					name:        decl.Name,
+					description: decl.Description,
+					parameters:  decl.Parameters,
+					pluginName:  inst.Manifest.Name,
+					registry:    l.pluginRegistry,
+				})
+			}
+			// 4-6: Auto-scan plugin hooks/ directory and register declared hooks.
+			if hookReg != nil {
+				l.registerPluginHooks(hookReg, inst)
+			}
+			// Notify bridge and other infrastructure that the tool registry changed.
+			if l.onToolRegistryChange != nil {
+				l.onToolRegistryChange()
+			}
+			return nil
+		})
 			pluginDir := filepath.Join(l.dataDir, "plugins")
 			if err := l.pluginRegistry.LoadFromDir(context.Background(), pluginDir); err == nil {
 				for _, inst := range l.pluginRegistry.List() {
@@ -143,6 +190,40 @@ func (l *Loop) governorEnabled() bool {
 
 func (l *Loop) compressionEnabled() bool {
 	return l.dreamweaverEnabled() && l.dreamweaverCfg.CompressionEnabled
+}
+
+// effectiveDreamweaver merges global agent config with optional user-home and workspace overlays
+// (`~/.goclaw/dreamweaver.json`, then `{workspace}/.goclaw/dreamweaver.json`).
+func (l *Loop) effectiveDreamweaver(req *RunRequest) *config.DreamWeaverConfig {
+	base := l.dreamweaverCfg
+	if base == nil {
+		return nil
+	}
+	layers := []*config.DreamWeaverConfig{base}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		p := filepath.Join(home, ".goclaw", "dreamweaver.json")
+		if over, err := config.LoadDreamWeaverFile(p); err == nil && over != nil {
+			layers = append(layers, over)
+		}
+	}
+	if req != nil && req.UserID != "" {
+		if val, ok := l.userSetups.Load(req.UserID); ok {
+			ws := val.(*userSetup).workspace
+			if ws != "" {
+				path := filepath.Join(ws, ".goclaw", "dreamweaver.json")
+				if over, err := config.LoadDreamWeaverFile(path); err == nil && over != nil {
+					layers = append(layers, over)
+				}
+			}
+		}
+	}
+	return config.MergeChain(layers...)
+}
+
+// compressionEnabledFor uses the merged DreamWeaver config for the run (project-level overrides).
+func (l *Loop) compressionEnabledFor(req *RunRequest) bool {
+	cfg := l.effectiveDreamweaver(req)
+	return cfg != nil && cfg.Enabled && cfg.CompressionEnabled
 }
 
 func (l *Loop) resumeEnabled() bool {
@@ -236,6 +317,66 @@ func (l *Loop) transcriptLogPath(runID string) string {
 	return filepath.Join(l.dataDir, "transcripts", runID+".jsonl")
 }
 
+// transcriptEvent is a single entry in the append-only JSONL event log.
+// Kind values: "user", "assistant", "tool_call", "tool_result", "system", "compact".
+type transcriptEvent struct {
+	TS    string         `json:"ts"`
+	RunID string         `json:"run_id"`
+	Kind  string         `json:"kind"`
+	Data  map[string]any `json:"data"`
+}
+
+// messageKind returns the JSONL event kind for a providers.Message.
+func messageKind(msg providers.Message) string {
+	switch msg.Role {
+	case "user":
+		return "user"
+	case "assistant":
+		if len(msg.ToolCalls) > 0 {
+			return "tool_call"
+		}
+		return "assistant"
+	case "tool":
+		return "tool_result"
+	case "system":
+		if msg.CompactBoundary != nil {
+			return "compact"
+		}
+		return "system"
+	default:
+		return msg.Role
+	}
+}
+
+// messageData converts a providers.Message to the JSONL event data map.
+func messageData(msg providers.Message) map[string]any {
+	d := map[string]any{}
+	if msg.Content != "" {
+		d["content"] = msg.Content
+	}
+	if msg.ToolCallID != "" {
+		d["tool_call_id"] = msg.ToolCallID
+	}
+	if msg.IsError {
+		d["is_error"] = true
+	}
+	if len(msg.ToolCalls) > 0 {
+		calls := make([]map[string]any, 0, len(msg.ToolCalls))
+		for _, tc := range msg.ToolCalls {
+			calls = append(calls, map[string]any{
+				"id":        tc.ID,
+				"name":      tc.Name,
+				"arguments": tc.Arguments,
+			})
+		}
+		d["tool_calls"] = calls
+	}
+	if msg.CompactBoundary != nil {
+		d["compact_boundary"] = msg.CompactBoundary
+	}
+	return d
+}
+
 func (l *Loop) writeTranscriptJSONL(runID string, msgs []providers.Message, appendMode bool) {
 	path := l.transcriptLogPath(runID)
 	if path == "" || len(msgs) == 0 {
@@ -256,8 +397,15 @@ func (l *Loop) writeTranscriptJSONL(runID string, msgs []providers.Message, appe
 	}
 	defer f.Close()
 	enc := json.NewEncoder(f)
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, msg := range msgs {
-		_ = enc.Encode(msg)
+		evt := transcriptEvent{
+			TS:    ts,
+			RunID: runID,
+			Kind:  messageKind(msg),
+			Data:  messageData(msg),
+		}
+		_ = enc.Encode(evt)
 	}
 }
 
@@ -268,6 +416,16 @@ func (noopProfileStore) GetProfile(context.Context, string, string) (*spirit.Pro
 }
 func (noopProfileStore) SaveProfile(context.Context, *spirit.Profile) error  { return nil }
 func (noopProfileStore) DeleteProfile(context.Context, string, string) error { return nil }
+
+// memoryDriftTrackingEnabled is true when DreamWeaver is on and episodic auto-inject is available.
+// Enables per-run DriftDetector (RecordInjection in ContextStage, Tick in ThinkStage iteration >= 1).
+func (l *Loop) memoryDriftTrackingEnabled(req *RunRequest) bool {
+	if req == nil || l.autoInjector == nil {
+		return false
+	}
+	dw := l.effectiveDreamweaver(req)
+	return dw != nil && dw.Enabled
+}
 
 func defaultDreamWeaverConfig(cfg *config.DreamWeaverConfig) *config.DreamWeaverConfig {
 	if cfg != nil {
@@ -303,13 +461,21 @@ type pluginPlaceholderTool struct {
 	description string
 	parameters  map[string]any
 	pluginName  string
+	registry    *plugins.Registry
 }
 
 func (t pluginPlaceholderTool) Name() string               { return t.name }
 func (t pluginPlaceholderTool) Description() string        { return t.description }
 func (t pluginPlaceholderTool) Parameters() map[string]any { return t.parameters }
-func (t pluginPlaceholderTool) Execute(context.Context, map[string]any) *tools.Result {
-	return tools.ErrorResult("plugin tool placeholder: " + t.pluginName + "/" + t.name + " is registered but has no runtime executor wired yet")
+func (t pluginPlaceholderTool) Execute(ctx context.Context, args map[string]any) *tools.Result {
+	if t.registry == nil {
+		return tools.ErrorResult("plugin runtime unavailable: registry is nil")
+	}
+	result, err := t.registry.ExecuteTool(ctx, t.pluginName, t.name, args)
+	if err != nil {
+		return tools.ErrorResult("plugin tool failed: " + err.Error())
+	}
+	return result
 }
 
 type pluginRuntimeTool struct {
@@ -516,57 +682,161 @@ func (l *Loop) buildDreamWeaverPromptSections(ctx context.Context, req *RunReque
 	return
 }
 
-// loadProjectRuleFiles scans the workspace for CLAUDE.md and .claude/*.md rule files
-// and returns their combined content as a DreamWeaver prompt section.
+// registerPluginHooks scans the plugin's hooks/ directory and registers a HandlerCommand
+// hook for each event declared in the manifest. The script path is resolved as:
+//
+//	<pluginRuntimeDir>/hooks/<event>[.sh|.bat|""]
+//
+// On Windows, .bat files are preferred; on other platforms, .sh files are tried first.
+func (l *Loop) registerPluginHooks(reg *hooks.Registry, inst *plugins.Instance) {
+	hooksDir := filepath.Join(inst.RuntimeDir, "hooks")
+	if _, err := os.Stat(hooksDir); os.IsNotExist(err) {
+		return
+	}
+	for i, decl := range inst.Manifest.Capabilities.Hooks {
+		if decl.Event == "" {
+			continue
+		}
+		// Find the script: try event name directly, then with .sh/.bat extensions.
+		candidates := []string{
+			filepath.Join(hooksDir, decl.Event),
+			filepath.Join(hooksDir, decl.Event+".sh"),
+			filepath.Join(hooksDir, decl.Event+".bat"),
+		}
+		var scriptPath string
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				scriptPath = c
+				break
+			}
+		}
+		if scriptPath == "" {
+			continue
+		}
+		mode := hooks.ModeAsync
+		if strings.EqualFold(decl.Mode, "sync") {
+			mode = hooks.ModeSync
+		}
+		hookID := fmt.Sprintf("plugin:%s:%s:%d", inst.Manifest.Name, decl.Event, i)
+		h := hooks.Hook{
+			ID:      hookID,
+			Event:   hooks.Event(decl.Event),
+			Mode:    mode,
+			Priority: decl.Priority,
+			AgentID: "*",
+			Enabled: true,
+			Handler: hooks.HandlerSpec{
+				Type:    hooks.HandlerCommand,
+				Target:  scriptPath,
+				Timeout: 30,
+			},
+		}
+		if err := reg.Register(h); err != nil {
+			slog.Warn("plugin hook registration failed",
+				"plugin", inst.Manifest.Name, "event", decl.Event, "error", err)
+		} else {
+			slog.Info("plugin hook registered",
+				"plugin", inst.Manifest.Name, "hook", hookID, "event", decl.Event)
+		}
+	}
+}
+
+// loadProjectRuleFiles scans the user home dir and workspace for CLAUDE.md / .claude/*.md
+// rule files and returns their combined content as a DreamWeaver prompt section.
+//
+// Layer priority (highest last, later sections override earlier):
+//   1. User-level:    ~/.goclaw/CLAUDE.md + ~/.goclaw/.claude/*.md
+//   2. Project-level: <workspace>/CLAUDE.md + <workspace>/.claude/*.md
+//
 // Files larger than 32 KB per file are truncated to avoid blowing the context window.
 func (l *Loop) loadProjectRuleFiles() string {
-	if l.workspace == "" {
-		return ""
-	}
 	const maxFileBytes = 32 * 1024
 	type ruleFile struct {
 		path    string
 		content string
 	}
-	var found []ruleFile
 
-	// Check root CLAUDE.md
-	claudeMD := filepath.Join(l.workspace, "CLAUDE.md")
-	if data, err := os.ReadFile(claudeMD); err == nil {
-		if len(data) > maxFileBytes {
-			data = data[:maxFileBytes]
+	// loadFromDir reads CLAUDE.md and .claude/*.md from a base directory.
+	loadFromDir := func(base string) []ruleFile {
+		if base == "" {
+			return nil
 		}
-		found = append(found, ruleFile{path: "CLAUDE.md", content: string(data)})
-	}
+		var files []ruleFile
 
-	// Scan .claude/ directory for *.md files
-	claudeDir := filepath.Join(l.workspace, ".claude")
-	if entries, err := os.ReadDir(claudeDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-				continue
-			}
-			fp := filepath.Join(claudeDir, e.Name())
-			data, err := os.ReadFile(fp)
-			if err != nil {
-				continue
-			}
+		// Root CLAUDE.md
+		if data, err := os.ReadFile(filepath.Join(base, "CLAUDE.md")); err == nil {
 			if len(data) > maxFileBytes {
 				data = data[:maxFileBytes]
 			}
-			found = append(found, ruleFile{path: filepath.Join(".claude", e.Name()), content: string(data)})
+			files = append(files, ruleFile{path: "CLAUDE.md", content: string(data)})
 		}
+
+		// .claude/*.md sub-directory
+		claudeDir := filepath.Join(base, ".claude")
+		if entries, err := os.ReadDir(claudeDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+					continue
+				}
+				fp := filepath.Join(claudeDir, e.Name())
+				data, err := os.ReadFile(fp)
+				if err != nil {
+					continue
+				}
+				if len(data) > maxFileBytes {
+					data = data[:maxFileBytes]
+				}
+				files = append(files, ruleFile{
+					path:    filepath.Join(".claude", e.Name()),
+					content: string(data),
+				})
+			}
+		}
+		return files
 	}
 
-	if len(found) == 0 {
+	type layeredSection struct {
+		label string
+		files []ruleFile
+	}
+
+	// Layer 1: user-level rules (~/.goclaw/)
+	homeDir, _ := os.UserHomeDir()
+	userFiles := loadFromDir(filepath.Join(homeDir, ".goclaw"))
+
+	// Layer 2: project-level rules (workspace root) — only when workspace is set.
+	var projectFiles []ruleFile
+	if l.workspace != "" {
+		projectFiles = loadFromDir(l.workspace)
+	}
+
+	layers := []layeredSection{
+		{"user", userFiles},
+		{"project", projectFiles},
+	}
+
+	var anyFound bool
+	for _, layer := range layers {
+		if len(layer.files) > 0 {
+			anyFound = true
+			break
+		}
+	}
+	if !anyFound {
 		return ""
 	}
 
 	var sb strings.Builder
 	sb.WriteString("## Project Rules\n\n")
-	sb.WriteString("The following project-specific rules and guidelines apply to this workspace:\n\n")
-	for _, rf := range found {
-		sb.WriteString(fmt.Sprintf("### %s\n\n%s\n\n", rf.path, strings.TrimSpace(rf.content)))
+	sb.WriteString("The following rules apply to this session (project rules take precedence over user rules):\n\n")
+	for _, layer := range layers {
+		if len(layer.files) == 0 {
+			continue
+		}
+		for _, rf := range layer.files {
+			label := fmt.Sprintf("%s/%s", layer.label, rf.path)
+			sb.WriteString(fmt.Sprintf("### %s\n\n%s\n\n", label, strings.TrimSpace(rf.content)))
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n") + "\n"
 }
@@ -586,6 +856,7 @@ func intentHasAssignedSubTasks(intent *spirit.Intent) bool {
 type delegateAgentExecutor struct {
 	runFn        tools.DelegateRunFunc
 	fromAgentKey string
+	loop         *Loop
 }
 
 func (e *delegateAgentExecutor) Execute(ctx context.Context, agentKey string, task spirit.SubTask) (string, error) {
@@ -595,7 +866,20 @@ func (e *delegateAgentExecutor) Execute(ctx context.Context, agentKey string, ta
 		DelegationID: fmt.Sprintf("spirit-%s", task.ID),
 		FromAgentKey: e.fromAgentKey,
 	}
+	parentRunID := tools.ToolRunIDFromCtx(ctx)
+	if e.loop != nil && e.loop.hooksEnabled() && e.loop.hookRegistry != nil {
+		_, _ = e.loop.hookRegistry.Fire(ctx, hooks.NewPayload(
+			hooks.EventSubagentStart, parentRunID, e.loop.id, "",
+			hooks.SubagentPayload{SubagentID: req.DelegationID, SubagentKind: "delegation", ParentRunID: parentRunID},
+		))
+	}
 	result, err := e.runFn(ctx, req)
+	if e.loop != nil && e.loop.hooksEnabled() && e.loop.hookRegistry != nil {
+		_, _ = e.loop.hookRegistry.Fire(ctx, hooks.NewPayload(
+			hooks.EventSubagentStop, parentRunID, e.loop.id, "",
+			hooks.SubagentPayload{SubagentID: req.DelegationID, SubagentKind: "delegation", ParentRunID: parentRunID},
+		))
+	}
 	if err != nil {
 		return "", err
 	}

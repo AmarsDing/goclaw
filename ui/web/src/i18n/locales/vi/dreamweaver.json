@@ -1,0 +1,80 @@
+{
+  "title": "Dreamweaver",
+  "subtitle": "Cầu nối từ xa, cấu hình lớp, liên kết workshop và cờ V3 (spirit) cho agent.",
+  "tabs": {
+    "bridge": "Cầu nối",
+    "layers": "Cấu hình lớp",
+    "workshop": "Workshop",
+    "alchemy": "Alchemy",
+    "spirit": "Spirit (agent)"
+  },
+  "bridge": {
+    "title": "WebSocket & SSE",
+    "desc": "Kết nối SDK hoặc automation với luồng sự kiện gateway.",
+    "ws": "WebSocket (cùng origin với UI):",
+    "sse": "Server-Sent Events (xác thực token, giống cầu MCP):",
+    "auth": "Gửi Authorization: Bearer <gateway token> cho SSE khi gateway yêu cầu token."
+  },
+  "layers": {
+    "title": "Thứ tự gộp cấu hình",
+    "desc": "Cài đặt DreamWeaver được gộp theo độ ưu tiên từ thấp đến cao.",
+    "order": "Lớp sau ghi đè lớp trước:",
+    "file": ".goclaw/dreamweaver.json trong workspace"
+  },
+  "workshop": {
+    "title": "Workshop",
+    "desc": "Skills, agents và gói marketplace.",
+    "openWizard": "Mở wizard từng bước",
+    "skills": "Skills",
+    "agents": "Agents",
+    "marketplace": "Marketplace"
+  },
+  "alchemy": {
+    "title": "Alchemy",
+    "desc": "Đóng gói và phát hành qua CLI và trang Packages (admin).",
+    "cli": "Dùng lệnh goclaw packages trong project; xem tài liệu về publish và verify.",
+    "packages": "Packages (admin)"
+  },
+  "spirit": {
+    "title": "Cài đặt spirit",
+    "desc": "Cờ khả năng V3 theo từng agent (pipeline, memory, retrieval, self-evolution).",
+    "pickAgent": "Agent",
+    "placeholder": "Chọn agent…",
+    "loading": "Đang tải cờ…",
+    "openAgent": "Mở chi tiết agent",
+    "hint": "Chọn một agent để xem và bật/tắt cờ V3."
+  },
+  "wizard": {
+    "title": "Workshop wizard",
+    "subtitle": "Từng bước: mục tiêu → chuẩn bị → Skills/Agents → đăng lên Marketplace.",
+    "backToHub": "Về Dreamweaver",
+    "stepLabel": "Bước {{current}} / {{total}}",
+    "prev": "Quay lại",
+    "next": "Tiếp",
+    "goals": {
+      "skill": "Gói skill",
+      "agent": "Định nghĩa agent",
+      "publish": "Đăng marketplace"
+    },
+    "prepare": {
+      "cli": "Cài CLI goclaw và xác thực gateway nếu đăng từ xa.",
+      "workspace": "Thư mục có .goclaw và SKILL.md / agent JSON hợp lệ.",
+      "token": "Đặt GOCLAW_GATEWAY_TOKEN khi Publisher upload hoặc marketplace push."
+    },
+    "actions": {
+      "openSkills": "Mở Skills",
+      "openAgents": "Mở Agents",
+      "openMarketplace": "Mở Marketplace"
+    },
+    "done": {
+      "hint": "Dùng Marketplace để cài hoặc đăng sau khi validate cục bộ.",
+      "cta": "Mở Marketplace"
+    },
+    "steps": {
+      "s1": { "label": "Mục tiêu", "title": "Bạn đang làm gì?", "desc": "Chọn một hướng; có thể đổi trước khi xong." },
+      "s2": { "label": "Chuẩn bị", "title": "Điều kiện", "desc": "Kiểm tra trước khi tạo hoặc upload." },
+      "s3": { "label": "Tạo", "title": "Mở đúng màn hình", "desc": "Skills/Agents để tạo nội dung; Marketplace liệt kê gói đã đăng." },
+      "s4": { "label": "Xong", "title": "Bước tiếp", "desc": "Đăng bằng CLI khi sẵn sàng hoặc duyệt marketplace." }
+    }
+  }
+}

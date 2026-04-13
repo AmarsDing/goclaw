@@ -88,3 +88,9 @@ compose.d/*
 /mise.*.toml
 /mise
 /.mise
+goclaw.exe
+goclaw-lite.exe
+
+# Mistaken Windows folder name / local scratch
+.../
+.tmp/

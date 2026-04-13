@@ -43,6 +43,8 @@ type InjectResult struct {
 	MatchCount int     // total matches found
 	Injected   int     // entries injected (after budget trim)
 	TopScore   float64 // highest relevance score
+	// Summaries is the L0 entries backing Section (for drift tracking, metrics).
+	Summaries []L0Summary
 }
 
 // L0Summary is a single auto-inject entry for the system prompt.

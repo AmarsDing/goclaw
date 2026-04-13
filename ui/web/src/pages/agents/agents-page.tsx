@@ -23,15 +23,17 @@ import { useAgents } from "./hooks/use-agents";
 import { AgentCard } from "./agent-card";
 import { AgentListRow } from "./agent-list-row";
 import { AgentCreateDialog } from "./agent-create-dialog";
+import { AgentPublishDialog } from "./agent-publish-dialog";
 import { AgentDetailPage } from "./agent-detail/agent-detail-page";
 import { SummoningModal } from "./summoning-modal";
 import { usePagination } from "@/hooks/use-pagination";
+import type { AgentData } from "@/types/agent";
 
 export function AgentsPage() {
   const { t } = useTranslation("agents");
   const { id: detailId } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { agents, loading, createAgent, deleteAgent, refresh, resummonAgent } = useAgents();
+  const { agents, loading, createAgent, deleteAgent, refresh, resummonAgent, publishToMarketplace } = useAgents();
   const showSkeleton = useDeferredLoading(loading && agents.length === 0);
 
   const [search, setSearch] = useState("");
@@ -40,6 +42,7 @@ export function AgentsPage() {
   const [typeFilter, setTypeFilter] = useState<string | undefined>();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [publishTarget, setPublishTarget] = useState<AgentData | null>(null);
   const [summoningAgent, setSummoningAgent] = useState<{ id: string; name: string } | null>(null);
 
   // Collect unique owner IDs for filter + contact resolution
@@ -214,6 +217,7 @@ export function AgentsPage() {
                       agent={agent}
                       onClick={() => handleClick(agent)}
                       onResummon={() => handleResummon(agent)}
+                      onPublish={() => setPublishTarget(agent)}
                       onDelete={() => setDeleteTarget({ id: agent.id, name: agent.display_name || agent.agent_key })}
                     />
                   ))}
@@ -227,6 +231,7 @@ export function AgentsPage() {
                       ownerName={resolveOwnerName(agent.owner_id)}
                       onClick={() => handleClick(agent)}
                       onResummon={() => handleResummon(agent)}
+                      onPublish={() => setPublishTarget(agent)}
                       onDelete={() => setDeleteTarget({ id: agent.id, name: agent.display_name || agent.agent_key })}
                     />
                   ))}
@@ -263,6 +268,18 @@ export function AgentsPage() {
               setSummoningAgent({ id: ag.id, name: ag.display_name || ag.agent_key });
             }
           }
+        }}
+      />
+
+      <AgentPublishDialog
+        open={!!publishTarget}
+        onOpenChange={(open) => {
+          if (!open) setPublishTarget(null);
+        }}
+        agent={publishTarget}
+        onConfirm={async (payload) => {
+          if (!publishTarget) return;
+          await publishToMarketplace(publishTarget.id, payload);
         }}
       />
 

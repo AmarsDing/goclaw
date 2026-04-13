@@ -18,6 +18,24 @@
     "description": "Bạn có chắc chắn muốn xóa \"{{name}}\"? Hành động này không thể hoàn tác.",
     "confirmLabel": "Xóa"
   },
+  "card": {
+    "publish": "Xuất bản",
+    "published": "Đã xuất bản"
+  },
+  "publishDialog": {
+    "title": "Xuất bản team lên marketplace",
+    "description": "Đóng gói bản xuất team (thành viên, task, bundle agent) thành team-export.tar.gz trong file zip. Xác nhận để tải lên và đánh dấu team đã xuất bản.",
+    "name": "Tên hiển thị",
+    "longDescription": "Mô tả",
+    "version": "Phiên bản",
+    "license": "Giấy phép",
+    "author": "Tác giả",
+    "authorPlaceholder": "Tùy chọn — mặc định dùng tên team",
+    "force": "Ghi đè nếu gói cùng ID đã tồn tại (xuất bản lại)",
+    "cancel": "Hủy",
+    "confirm": "Xuất bản",
+    "submitting": "Đang xuất bản…"
+  },
   "detail": {
     "lead": "Trưởng nhóm",
     "memberCount": "{{count}} thành viên",
@@ -342,7 +360,9 @@
     "failedRejectTask": "Không thể từ chối task",
     "failedBulkDeleteTasks": "Không thể xóa các task",
     "workspaceFileDeleted": "Đã xóa file",
-    "failedDeleteWorkspaceFile": "Không thể xóa file"
+    "failedDeleteWorkspaceFile": "Không thể xóa file",
+    "published": "Đã xuất bản lên marketplace",
+    "publishFailed": "Không thể xuất bản team"
   },
   "board": {
     "kanban": "Bảng",

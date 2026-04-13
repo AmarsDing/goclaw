@@ -29,8 +29,9 @@ const (
 	EventToolCallOutput EventType = "tool.call.output"
 
 	// Permission events
-	EventPermissionRequest EventType = "permission.request"
-	EventPermissionResult  EventType = "permission.result"
+	EventPermissionRequest      EventType = "permission.request"
+	EventPermissionResult       EventType = "permission.result"
+	EventPermissionModeChange   EventType = "permission.mode_change"
 
 	// Progress events
 	EventProgress EventType = "progress"
@@ -111,6 +112,15 @@ type PermissionResultData struct {
 	RequestID string `json:"request_id"`
 	Allowed   bool   `json:"allowed"`
 	Reason    string `json:"reason"`
+	Source    string `json:"source,omitempty"` // e.g. rule, safety, headless, approval
+}
+
+// PermissionModeChangeData accompanies EventPermissionModeChange.
+type PermissionModeChangeData struct {
+	AgentID string `json:"agent_id"`
+	OldMode string `json:"old_mode"`
+	NewMode string `json:"new_mode"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // ProgressData accompanies EventProgress.

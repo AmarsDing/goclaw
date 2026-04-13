@@ -104,7 +104,7 @@ func (p *Pipeline) Run(ctx context.Context, state *RunState) (*RunResult, error)
 	finalizeCtx := context.WithoutCancel(ctx)
 	for _, stage := range p.finalize {
 		if err := stage.Execute(finalizeCtx, state); err != nil {
-			slog.Warn("finalize stage error", "stage", stage.Name(), "err", err)
+			slog.Warn("finalize stage error", "stage", stage.Name(), "error", err)
 		}
 	}
 

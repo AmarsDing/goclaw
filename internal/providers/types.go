@@ -148,6 +148,17 @@ type Message struct {
 	// Pointer type so that older messages (stored before this field existed) deserialize as nil,
 	// allowing the frontend to fall back to synthetic timestamps.
 	CreatedAt *time.Time `json:"created_at,omitempty"`
+
+	// CompactBoundary marks a system message that begins a compacted region (resume / UI).
+	CompactBoundary *CompactMeta `json:"compact_boundary,omitempty"`
+}
+
+// CompactMeta describes a compact / collapse boundary in the transcript.
+type CompactMeta struct {
+	Level         string    `json:"level"`          // e.g. L3, L4, full
+	OriginalCount int       `json:"original_count"` // messages before fold (approximate)
+	CompactedAt   time.Time `json:"compacted_at"`
+	SummaryTokens int       `json:"summary_tokens,omitempty"`
 }
 
 // ToolCall represents a tool invocation requested by the LLM.

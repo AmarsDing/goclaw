@@ -1,4 +1,4 @@
-package pipeline
+﻿package pipeline
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 )
 
 // MemoryFlushStage flushes memories to long-term storage before compaction.
-// NOT registered as a pipeline stage — invoked inline by PruneStage.
+// NOT registered as a pipeline stage - invoked inline by PruneStage.
 type MemoryFlushStage struct {
 	deps *PipelineDeps
 }
@@ -24,8 +24,8 @@ func (s *MemoryFlushStage) Execute(ctx context.Context, state *RunState) error {
 		return nil
 	}
 	if err := s.deps.RunMemoryFlush(ctx, state); err != nil {
-		// Memory flush failure is non-fatal — log and continue to compaction.
-		slog.Warn("memory flush failed, continuing to compaction", "err", err)
+		// Memory flush failure is non-fatal - log and continue to compaction.
+		slog.Warn("memory flush failed, continuing to compaction", "error", err)
 	}
 	return nil
 }

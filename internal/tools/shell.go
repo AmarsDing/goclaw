@@ -128,6 +128,51 @@ func (t *ExecTool) Parameters() map[string]any {
 	}
 }
 
+// readOnlyExecPrefixes lists command prefixes that only read state or print metadata.
+// Used for ConcurrencySafeWithArgsTool: parallel batches may run these together.
+var readOnlyExecPrefixes = []string{
+	"ls", "dir", "cat", "head", "tail", "wc", "find", "grep", "rg",
+	"which", "where", "type", "file", "stat", "du", "df",
+	"echo", "printf", "date", "whoami", "hostname", "uname",
+	"pwd", "env", "printenv",
+	"git status", "git log", "git diff", "git show", "git branch",
+	"go version", "go list", "node -v",
+	"npm list", "python --version", "pip list",
+}
+
+func execConcurrencySafeCommand(cmd string) bool {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return false
+	}
+	if strings.Contains(cmd, "|") {
+		parts := strings.Split(cmd, "|")
+		for _, part := range parts {
+			if !execConcurrencySafeCommand(strings.TrimSpace(part)) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, prefix := range readOnlyExecPrefixes {
+		if cmd == prefix || strings.HasPrefix(cmd, prefix+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsConcurrencySafeWithArgs implements ConcurrencySafeWithArgsTool.
+func (t *ExecTool) IsConcurrencySafeWithArgs(args map[string]any) bool {
+	command, _ := args["command"].(string)
+	return execConcurrencySafeCommand(command)
+}
+
+// InterruptBehavior implements InterruptBehaviorTool (exec is cancellable).
+func (t *ExecTool) InterruptBehavior() InterruptBehavior {
+	return InterruptCancel
+}
+
 func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *Result {
 	command, _ := args["command"].(string)
 	if command == "" {

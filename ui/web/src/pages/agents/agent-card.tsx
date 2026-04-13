@@ -1,27 +1,29 @@
-import { Bot, Star, RotateCcw, Trash2, Sparkles } from "lucide-react";
+import { Bot, Star, RotateCcw, Trash2, Sparkles, Rocket } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AgentData } from "@/types/agent";
 import { cn } from "@/lib/utils";
-import { UUID_RE, agentDisplayName, hasActiveChatGPTOAuthRouting, readPromptMode } from "./agent-detail/agent-display-utils";
+import { UUID_RE, agentDisplayName, hasActiveChatGPTOAuthRouting, readMarketplacePublished, readPromptMode } from "./agent-detail/agent-display-utils";
 import { promptModeBadgeClass } from "./agent-detail/prompt-mode-badge-utils";
 
 interface AgentCardProps {
   agent: AgentData;
   onClick: () => void;
   onResummon?: () => void;
+  onPublish?: () => void;
   onDelete?: () => void;
 }
 
-export function AgentCard({ agent, onClick, onResummon, onDelete }: AgentCardProps) {
+export function AgentCard({ agent, onClick, onResummon, onPublish, onDelete }: AgentCardProps) {
   const { t } = useTranslation("agents");
   const displayName = agentDisplayName(agent, t("card.unnamedAgent"));
   const selfEvolve = agent.agent_type === "predefined" && Boolean(agent.self_evolve);
   const emoji = agent.emoji ?? "";
   const hasOAuthRouting = hasActiveChatGPTOAuthRouting(agent.chatgpt_oauth_routing);
   const promptMode = readPromptMode(agent);
+  const marketplacePublished = readMarketplacePublished(agent);
 
   // Show agent_key as subtitle only if there's a display_name and agent_key is meaningful
   const showSubtitle = agent.display_name && !UUID_RE.test(agent.agent_key);
@@ -115,39 +117,61 @@ export function AgentCard({ agent, onClick, onResummon, onDelete }: AgentCardPro
             {t("chatgptOAuthRouting.badge")}
           </Badge>
         )}
+        {marketplacePublished && (
+          <Badge variant="secondary" className="text-xs-plus border-primary/30 bg-primary/10 text-primary">
+            {t("card.published")}
+          </Badge>
+        )}
         {agent.context_window > 0 && (
           <span className="text-xs-plus text-muted-foreground">
             {(agent.context_window / 1000).toFixed(0)}K ctx
           </span>
         )}
-        {agent.status === "summon_failed" && onResummon && (
-          <Button
-            variant="outline"
-            size="xs"
-            className="ml-auto"
-            onClick={(e) => {
-              e.stopPropagation();
-              onResummon();
-            }}
-          >
-            <RotateCcw className="h-3 w-3" />
-            {t("card.resummon")}
-          </Button>
-        )}
-        {onDelete && (
-          <Button
-            variant="ghost"
-            size="xs"
-            className={`text-muted-foreground hover:text-destructive ${agent.status === "summon_failed" && onResummon ? "" : "ml-auto"}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t("card.delete")}
-          </Button>
-        )}
+        {(agent.status === "summon_failed" && onResummon) || onPublish || onDelete ? (
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            {agent.status === "summon_failed" && onResummon && (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onResummon();
+                }}
+              >
+                <RotateCcw className="h-3 w-3" />
+                {t("card.resummon")}
+              </Button>
+            )}
+            {onPublish && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPublish();
+                }}
+              >
+                <Rocket className="h-3.5 w-3.5" />
+                {t("card.publish")}
+              </Button>
+            )}
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {t("card.delete")}
+              </Button>
+            )}
+          </div>
+        ) : null}
       </div>
     </button>
   );

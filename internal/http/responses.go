@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/nextlevelbuilder/goclaw/internal/agent"
+	"github.com/nextlevelbuilder/goclaw/internal/i18n"
 	"github.com/nextlevelbuilder/goclaw/internal/permissions"
 	"github.com/nextlevelbuilder/goclaw/internal/sessions"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
@@ -44,25 +45,27 @@ type responsesRequest struct {
 }
 
 func (h *ResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	locale := extractLocale(r)
+
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
 
 	// Auth + RBAC check (gateway token or API key, operator required for POST)
 	auth := resolveAuth(r)
 	if !auth.Authenticated {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, "unauthorized", i18n.T(locale, i18n.MsgUnauthorized))
 		return
 	}
 	if !permissions.HasMinRole(auth.Role, permissions.RoleOperator) {
-		http.Error(w, `{"error":"permission denied: insufficient role"}`, http.StatusForbidden)
+		writeError(w, http.StatusForbidden, "permission_denied", i18n.T(locale, i18n.MsgPermissionDenied, "insufficient role"))
 		return
 	}
 
 	// Inject tenant, role, user, and locale into context for downstream stores/tools.
 	r = r.WithContext(enrichContext(r.Context(), r, auth))
-	locale := extractLocale(r)
+	locale = extractLocale(r) // re-read after enrichContext to pick up user-specific locale
 
 	// Limit request body size to prevent DoS
 	const maxRequestBodySize = 1 << 20 // 1MB
@@ -74,7 +77,7 @@ func (h *ResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(req.Messages) == 0 {
-		http.Error(w, `{"error":"messages is required"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid_request", i18n.T(locale, i18n.MsgRequired, "messages"))
 		return
 	}
 
@@ -83,7 +86,7 @@ func (h *ResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	loop, err := h.agents.Get(r.Context(), agentID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"agent not found: %s"}`, agentID), http.StatusNotFound)
+		writeError(w, http.StatusNotFound, "agent_not_found", fmt.Sprintf("agent not found: %s", agentID))
 		return
 	}
 
@@ -95,7 +98,7 @@ func (h *ResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if lastMessage == "" {
-		http.Error(w, `{"error":"no user message found"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid_request", "no user message found")
 		return
 	}
 

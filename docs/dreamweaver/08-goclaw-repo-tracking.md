@@ -2,7 +2,7 @@
 
 对本仓库 **goclaw** 的变更做持续追踪，输出可消费的差异与影响信息，支撑评审、回归与 Agent 上下文。
 
-**状态：🔴 未实现**（自动化管线与模块映射均未落地；见文末「实现现状」）。
+**状态：🟢 P0–P1 已落地**（`goclaw changelog` + 子系统映射 + 启发式风险标签 + JSON；托管 API / PR 评论 / Webhook 仍为 P2+）。见 §9。
 
 ---
 
@@ -127,16 +127,34 @@
 
 | 子项 | 状态 | 备注 |
 |------|------|------|
-| 本仓库变更抓取 | 🔴 未实现 | 无统一命令或 CI job |
-| 变更价值 / 风险评估 | 🔴 未实现 | 无自动标签与规则引擎 |
-| 与模块映射 | 🔴 未实现 | 无映射表与报告章节 |
-| 变更通知 / changelog | 🔴 未实现 | 无定时或 PR 集成 |
+| 本仓库变更抓取 | 🟢 已实现 | **`goclaw changelog`**：`git log` + `git diff --name-status` + `git diff --stat`；`--from` / `--to`；环境变量 **`BASE_REF` / `HEAD_REF`**（CI 友好） |
+| 变更价值 / 风险评估 | 🟡 启发式 | **`Risk flags`**：路径规则（`migrations/`、`pkg/`、`internal/permissions`、`internal/tools`、`internal/http`、`internal/gateway`、`ui/web`、纯 `docs/` 等）；报告内声明为 *heuristic* |
+| 与模块映射 | 🟢 已实现 | **`internal/changelog/subsystems.yaml`** 前缀 → 子系统名；报告含 **Files by subsystem** |
+| 机器可读 JSON | 🟢 已实现 | **`goclaw changelog --json`** |
+| 变更通知 / PR 集成 | 🟡 可选 CI | **`.github/workflows/changelog.yaml`**：`workflow_dispatch` 与 **PR** 上传 `changelog.md` + `changelog.json` artifact；IM / PR 评论机器人仍为 P2 |
+
+**用法示例（本地）**
+
+```bash
+goclaw changelog --from v1.0.0 --to HEAD
+goclaw changelog --json --from HEAD~20 --to HEAD > report.json
+```
+
+**CI 示例（Linux）**
+
+```bash
+export BASE_REF="${BASE_REF:-origin/main}"
+export HEAD_REF="${HEAD_REF:-HEAD}"
+goclaw changelog --from "$BASE_REF" --to "$HEAD_REF"
+```
+
+实现代码：`internal/changelog/report.go`（嵌入 `subsystems.yaml`）、`cmd/changelog_cmd.go`。
 
 ---
 
 ## 10. 附录：子系统映射初稿（实现时可挪到 `docs/` 或代码内）
 
-以下为 **示例**，落地时以仓库实际边界为准：
+以下为 **历史示例**；**权威映射** 以仓库内 **`internal/changelog/subsystems.yaml`** 为准（changelog 报告按最长前缀匹配归类）。
 
 | 路径前缀 | 子系统名称 |
 |----------|------------|

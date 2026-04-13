@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"html"
 	"strings"
 	"time"
 
@@ -230,7 +232,7 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 				}
 				return []providers.Message{{
 					Role:       "tool",
-					Content:    "[permission denied] " + decision.Reason,
+					Content:    syntheticToolError("permission_denied", tc.Name, decision.Reason),
 					ToolCallID: tc.ID,
 					IsError:    true,
 				}}, nil
@@ -255,7 +257,7 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 			if updatedTC, blocked, reason := applyToolHookResults(tc, results); blocked {
 				return []providers.Message{{
 					Role:       "tool",
-					Content:    "[hook blocked] " + reason,
+					Content:    syntheticToolError("hook_blocked", tc.Name, reason),
 					ToolCallID: tc.ID,
 					IsError:    true,
 				}}, nil
@@ -397,12 +399,12 @@ func (l *Loop) buildPipelineDeps(req *RunRequest, bridgeRS *runState) pipeline.P
 		ExecuteToolCall:   executeToolCall,
 		ExecuteToolRaw:    cb.executeToolRaw,
 		ProcessToolResult: cb.processToolResult,
-		ToolConcurrencySafe: func(toolName string) bool {
+		ToolConcurrencySafe: func(toolName string, args map[string]any) bool {
 			registry, ok := l.tools.(*tools.Registry)
 			if !ok || registry == nil {
 				return false
 			}
-			return registry.IsConcurrencySafe(l.resolveToolCallName(toolName))
+			return registry.IsConcurrencySafeWithArgs(l.resolveToolCallName(toolName), args)
 		},
 		CheckReadOnly:     cb.checkReadOnly,
 
@@ -582,15 +584,26 @@ func convertRunResult(pr *pipeline.RunResult) *RunResult {
 	}
 }
 
+// syntheticToolError generates a structured error message that helps the LLM
+// understand why a tool was not executed and adjust its reasoning.
+func syntheticToolError(category, toolName, reason string) string {
+	return fmt.Sprintf(
+		"<tool_use_error>\n<category>%s</category>\n<tool>%s</tool>\n<reason>%s</reason>\n"+
+			"<guidance>This tool call was blocked by the system. Do not retry the same "+
+			"call. Consider an alternative approach or inform the user.</guidance>\n</tool_use_error>",
+		html.EscapeString(category), html.EscapeString(toolName), html.EscapeString(reason),
+	)
+}
+
 // makeAutoInjectCallback creates the AutoInject callback that captures agent/tenant context.
 // Returns nil if autoInjector is not configured (v3 retrieval disabled or no episodic store).
 // Phase 9: plumbs recentContext through to enrich vector search queries for
 // context-aware recall.
-func (l *Loop) makeAutoInjectCallback(req *RunRequest) func(ctx context.Context, userMessage, userID, recentContext string) (string, error) {
+func (l *Loop) makeAutoInjectCallback(req *RunRequest) func(ctx context.Context, userMessage, userID, recentContext string) (string, []memory.L0Summary, error) {
 	if l.autoInjector == nil {
 		return nil
 	}
-	return func(ctx context.Context, userMessage, userID, recentContext string) (string, error) {
+	return func(ctx context.Context, userMessage, userID, recentContext string) (string, []memory.L0Summary, error) {
 		result, err := l.autoInjector.Inject(ctx, memory.InjectParams{
 			AgentID:       l.agentUUID.String(),
 			UserID:        userID,
@@ -599,8 +612,8 @@ func (l *Loop) makeAutoInjectCallback(req *RunRequest) func(ctx context.Context,
 			RecentContext: recentContext,
 		})
 		if err != nil || result == nil {
-			return "", err
+			return "", nil, err
 		}
-		return result.Section, nil
+		return result.Section, result.Summaries, nil
 	}
 }

@@ -314,9 +314,16 @@ func (l *Loop) makePruneMessages() func(msgs []providers.Message, budget int) []
 
 func (l *Loop) makeCompactMessages(req *RunRequest) func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error) {
 	return func(ctx context.Context, msgs []providers.Message, model string) ([]providers.Message, error) {
-		compacted := l.compactMessagesInPlace(ctx, msgs)
-		if compacted == nil {
-			return msgs, nil // compaction failed, return original
+		compacted := msgs
+		if l.compressionEnabledFor(req) && l.compressionEng != nil {
+			if result, compressed, err := l.compressionEng.Compress(ctx, msgs); err == nil && compressed && result != nil {
+				compacted = result.Messages
+			}
+		} else {
+			legacyCompacted := l.compactMessagesInPlace(ctx, msgs)
+			if legacyCompacted != nil {
+				compacted = legacyCompacted
+			}
 		}
 		// Stamp session metadata with the compaction timestamp so operators
 		// can diagnose compaction cadence without a dedicated column. Stored

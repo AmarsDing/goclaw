@@ -118,10 +118,11 @@ type SystemPromptConfig struct {
 	HasSkillSearch      bool              // skill_search tool registered? (for search-mode prompt)
 	HasSkillManage      bool              // skill_manage tool registered + skill_evolve enabled for this agent
 	PinnedSkillsSummary string            // XML summary of pinned skills only (hybrid mode)
-	HasMCPToolSearch    bool              // mcp_tool_search tool registered? (MCP search mode)
-	HasKnowledgeGraph   bool              // knowledge_graph_search tool registered?
-	HasMemoryExpand     bool              // memory_expand tool registered? (v3 episodic deep retrieval)
-	MCPToolDescs        map[string]string // MCP tool name → description (inline mode only)
+	HasMCPToolSearch       bool              // mcp_tool_search tool registered? (MCP search mode)
+	HasKnowledgeGraph      bool              // knowledge_graph_search tool registered?
+	HasMemoryExpand        bool              // memory_expand tool registered? (v3 episodic deep retrieval)
+	MCPToolDescs           map[string]string // MCP tool name → description (inline mode only)
+	MCPServerInstructions  map[string]string // server name → instructions from MCP initialize response
 
 	// Sandbox info — matching TS sandboxInfo in system-prompt.ts
 	SandboxEnabled         bool   // exec tool runs inside Docker sandbox?
@@ -357,14 +358,11 @@ func BuildSystemPrompt(cfg SystemPromptConfig) string {
 		lines = append(lines, buildPinnedSkillsMinimalSection(cfg.PinnedSkillsSummary)...)
 	}
 
-	// 4.5. ## MCP Tools — full + task + none (none: search-only)
-	if (isFull || isTask || isNone) && !cfg.IsBootstrap {
-		if isFull && len(cfg.MCPToolDescs) > 0 {
-			lines = append(lines, buildMCPToolsInlineSection(cfg.MCPToolDescs)...)
-		}
-		if cfg.HasMCPToolSearch {
-			lines = append(lines, buildMCPToolsSearchSection()...)
-		}
+	// 4.5. ## MCP Tools — search guidance only (stable, cacheable).
+	// Per-tool MCP descriptions are injected below the cache boundary (4.5b) so
+	// changing connected servers does not invalidate the stable prefix.
+	if (isFull || isTask || isNone) && !cfg.IsBootstrap && cfg.HasMCPToolSearch {
+		lines = append(lines, buildMCPToolsSearchSection()...)
 	}
 
 	// 6. ## Workspace (sandbox-aware: show container workdir when sandboxed)
@@ -429,6 +427,18 @@ func BuildSystemPrompt(cfg SystemPromptConfig) string {
 	// Provider DynamicSuffix — injected after boundary
 	if cfg.ProviderContribution != nil && cfg.ProviderContribution.DynamicSuffix != "" {
 		lines = append(lines, cfg.ProviderContribution.DynamicSuffix, "")
+	}
+
+	// 4.5b ## MCP Tool Instructions — dynamic (below cache boundary). Full mode only
+	// (same as previous inline placement; search-only modes use mcp_tool_search).
+	if isFull && !cfg.IsBootstrap && len(cfg.MCPToolDescs) > 0 {
+		lines = append(lines, buildMCPToolsInlineSection(cfg.MCPToolDescs)...)
+	}
+
+	// 4.5c ## MCP Server Guidance — per-server instructions from initialize response.
+	// Below cache boundary because instructions may change when server restarts.
+	if isFull && !cfg.IsBootstrap && len(cfg.MCPServerInstructions) > 0 {
+		lines = append(lines, buildMCPServerInstructionsSection(cfg.MCPServerInstructions)...)
 	}
 
 	// 8. Time (below boundary — date changes don't bust the stable cache)

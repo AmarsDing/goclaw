@@ -45,6 +45,7 @@ func connectAndDiscover(ctx context.Context, name, transportType, command string
 	// this because the HTTP server rejects connections until ready (connection refused).
 	const maxInitAttempts = 4 // backoff: 2s + 4s + 8s = ~14s total before giving up
 	var initErr error
+	var serverInstructions string
 	for attempt := range maxInitAttempts {
 		if attempt > 0 {
 			backoff := time.Duration(1<<attempt) * time.Second // 2s, 4s, 8s
@@ -56,7 +57,9 @@ func connectAndDiscover(ctx context.Context, name, transportType, command string
 				return nil, nil, fmt.Errorf("initialize: context cancelled during retry: %w", ctx.Err())
 			}
 		}
-		if _, err := client.Initialize(ctx, initReq); err == nil {
+		if result, err := client.Initialize(ctx, initReq); err == nil {
+			// Capture server-level instructions (MCP protocol: hint for system prompt).
+			serverInstructions = result.Instructions
 			break
 		} else {
 			initErr = err
@@ -82,10 +85,11 @@ func connectAndDiscover(ctx context.Context, name, transportType, command string
 	}
 
 	ss := &serverState{
-		name:       name,
-		transport:  transportType,
-		client:     client,
-		timeoutSec: timeoutSec,
+		name:         name,
+		transport:    transportType,
+		instructions: serverInstructions,
+		client:       client,
+		timeoutSec:   timeoutSec,
 		conn: connParams{
 			command: command,
 			args:    args,

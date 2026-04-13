@@ -17,11 +17,14 @@ import (
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
+// regenerateTimeout is the maximum time allowed for an agent regeneration pass.
+const regenerateTimeout = 300 * time.Second
+
 // RegenerateAgent updates context files based on an edit prompt.
 // Reads existing files, sends them + edit instructions to LLM, stores results.
 // Synchronous — caller should run in goroutine if needed.
 func (s *AgentSummoner) RegenerateAgent(agentID uuid.UUID, tenantID uuid.UUID, providerName, model, editPrompt string) {
-	ctx, cancel := context.WithTimeout(store.WithTenantID(context.Background(), tenantID), 300*time.Second)
+	ctx, cancel := context.WithTimeout(store.WithTenantID(context.Background(), tenantID), regenerateTimeout)
 	defer cancel()
 
 	s.ensureBackfillFiles(ctx, agentID)

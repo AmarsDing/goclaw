@@ -19,6 +19,15 @@ export function readPromptMode(agent: { other_config?: Record<string, unknown> |
   return (bag.prompt_mode as string) || "full";
 }
 
+/** True when other_config.marketplace.published is set (agent listed via marketplace publish). */
+export function readMarketplacePublished(agent: { other_config?: Record<string, unknown> | null }): boolean {
+  const oc = agent.other_config;
+  if (!oc || typeof oc !== "object") return false;
+  const m = oc.marketplace as Record<string, unknown> | undefined;
+  if (!m || typeof m !== "object") return false;
+  return Boolean(m.published);
+}
+
 /** Matches a standard UUID v4 string. */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

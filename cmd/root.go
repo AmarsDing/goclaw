@@ -49,6 +49,7 @@ func init() {
 	rootCmd.AddCommand(tenantRestoreCmd())
 	rootCmd.AddCommand(authCmd())
 	rootCmd.AddCommand(marketplaceCmd())
+	rootCmd.AddCommand(changelogCmd())
 	rootCmd.AddCommand(setupCmd())
 }
 

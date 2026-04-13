@@ -159,7 +159,7 @@ func (r *Registry) Deactivate(_ context.Context, name string) error {
 
 	if onDeactivate != nil {
 		if err := onDeactivate(inst); err != nil {
-			slog.Warn("deactivate error", "plugin", name, "err", err)
+			slog.Warn("deactivate error", "plugin", name, "error", err)
 		}
 	}
 
@@ -267,12 +267,12 @@ func (r *Registry) LoadFromDir(ctx context.Context, dir string) error {
 
 		var manifest Manifest
 		if err := json.Unmarshal(data, &manifest); err != nil {
-			slog.Warn("invalid plugin manifest", "path", manifestPath, "err", err)
+			slog.Warn("invalid plugin manifest", "path", manifestPath, "error", err)
 			continue
 		}
 
 		if err := r.Install(ctx, manifest); err != nil {
-			slog.Warn("plugin install failed", "name", manifest.Name, "err", err)
+			slog.Warn("plugin install failed", "name", manifest.Name, "error", err)
 			continue
 		}
 		r.mu.Lock()
@@ -343,7 +343,9 @@ func (r *Registry) ExecuteTool(ctx context.Context, pluginName, toolName string,
 
 	go func() {
 		defer stdin.Close()
-		_, _ = stdin.Write(append(payload, '\n'))
+		if _, werr := stdin.Write(append(payload, '\n')); werr != nil {
+			slog.Warn("plugin.stdio: failed to write request to stdin", "error", werr)
+		}
 	}()
 
 	stdoutText := readAllText(stdout)

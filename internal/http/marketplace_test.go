@@ -3,17 +3,42 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"encoding/hex"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/nextlevelbuilder/goclaw/internal/marketplace"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
+
+type stubArtifactStore struct {
+	lastKey  string
+	lastPath string
+	lastSize int64
+	uri      string
+	err      error
+}
+
+func (s *stubArtifactStore) UploadFile(_ context.Context, key, localPath string, size int64) (string, error) {
+	s.lastKey = key
+	s.lastPath = localPath
+	s.lastSize = size
+	if s.err != nil {
+		return "", s.err
+	}
+	if s.uri == "" {
+		return "s3://bucket/" + key, nil
+	}
+	return s.uri, nil
+}
 
 func TestMarketplaceHandler_UpsertThenList(t *testing.T) {
 	t.Parallel()
@@ -162,6 +187,7 @@ func TestMarketplaceHandler_UploadStagesArtifact(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
 	h := NewMarketplaceHandler(dataDir)
+	h.artifactStore = &stubArtifactStore{uri: "s3://bucket/marketplace/staging/pkg-upload/pkg.zip"}
 
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -198,6 +224,129 @@ func TestMarketplaceHandler_UploadStagesArtifact(t *testing.T) {
 	}
 	if pkg.ReviewState != "pending_review" {
 		t.Fatalf("review state = %q, want pending_review", pkg.ReviewState)
+	}
+	if pkg.ArtifactURI == "" || pkg.ArtifactSHA256 == "" || pkg.ArtifactSize == 0 {
+		t.Fatalf("expected artifact metadata to be set, got uri=%q sha=%q size=%d", pkg.ArtifactURI, pkg.ArtifactSHA256, pkg.ArtifactSize)
+	}
+}
+
+func TestMarketplaceHandler_UploadRejectsChecksumMismatch(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	h := NewMarketplaceHandler(dataDir)
+
+	payload := []byte("zip-bytes")
+	sum := sha256.Sum256(payload)
+	goodHash := hex.EncodeToString(sum[:])
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", "pkg.zip")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	if _, err := part.Write(payload); err != nil {
+		t.Fatalf("Write file: %v", err)
+	}
+	meta := `{"package":{"id":"pkg-upload-mismatch","name":"upload-demo","type":"plugin","version":"1.0.0","description":"demo"},"force":false,"artifact_size":9,"artifact_sha256":"` + goodHash + `00"}`
+	if err := mw.WriteField("metadata", meta); err != nil {
+		t.Fatalf("WriteField: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("Close multipart: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/packages/upload", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.handleUpload(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestMarketplaceHandler_ResumableUploadCompletes(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	h := NewMarketplaceHandler(dataDir)
+	h.artifactStore = &stubArtifactStore{uri: "s3://bucket/marketplace/staging/pkg-upload-resume/artifact.zip"}
+
+	artifact := []byte("this-is-a-resumable-archive")
+	sum := sha256.Sum256(artifact)
+	sha := hex.EncodeToString(sum[:])
+	uploadID := "upload-test-12345"
+	totalParts := 2
+	part1 := artifact[:12]
+	part2 := artifact[12:]
+
+	sendChunk := func(partNum int, chunk []byte, includeMeta bool) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		part, err := mw.CreateFormFile("file", "part.bin")
+		if err != nil {
+			t.Fatalf("CreateFormFile: %v", err)
+		}
+		if _, err := part.Write(chunk); err != nil {
+			t.Fatalf("Write chunk: %v", err)
+		}
+		_ = mw.WriteField("upload_id", uploadID)
+		_ = mw.WriteField("part_number", strconv.Itoa(partNum))
+		_ = mw.WriteField("total_parts", strconv.Itoa(totalParts))
+		if includeMeta {
+			meta := map[string]any{
+				"package": map[string]any{
+					"id":          "pkg-upload-resume",
+					"name":        "resume-demo",
+					"type":        "plugin",
+					"version":     "1.0.0",
+					"description": "demo",
+				},
+				"artifact_size":   len(artifact),
+				"artifact_sha256": sha,
+				"file_name":       "artifact.zip",
+			}
+			raw, _ := json.Marshal(meta)
+			_ = mw.WriteField("metadata", string(raw))
+		}
+		_ = mw.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/v1/marketplace/packages/upload/chunk", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		rec := httptest.NewRecorder()
+		h.handleUploadChunk(rec, req)
+		return rec
+	}
+
+	rec1 := sendChunk(1, part1, true)
+	if rec1.Code != http.StatusCreated {
+		t.Fatalf("chunk1 status=%d body=%s", rec1.Code, rec1.Body.String())
+	}
+	rec2 := sendChunk(2, part2, false)
+	if rec2.Code != http.StatusCreated {
+		t.Fatalf("chunk2 status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+
+	completeBody, _ := json.Marshal(map[string]any{"upload_id": uploadID})
+	completeReq := httptest.NewRequest(http.MethodPost, "/v1/marketplace/packages/upload/complete", bytes.NewReader(completeBody))
+	completeRec := httptest.NewRecorder()
+	h.handleUploadComplete(completeRec, completeReq)
+	if completeRec.Code != http.StatusCreated {
+		t.Fatalf("complete status=%d body=%s", completeRec.Code, completeRec.Body.String())
+	}
+	artifactPath := filepath.Join(dataDir, "marketplace", "staging", "pkg-upload-resume", "artifact.zip")
+	got, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read artifact: %v", err)
+	}
+	if !bytes.Equal(got, artifact) {
+		t.Fatalf("artifact mismatch: got %q want %q", string(got), string(artifact))
+	}
+	pkg, ok := h.catalog.Get("pkg-upload-resume")
+	if !ok {
+		t.Fatal("expected package in catalog")
+	}
+	if pkg.ArtifactURI == "" || pkg.ArtifactSHA256 == "" || pkg.ArtifactSize == 0 {
+		t.Fatalf("expected artifact metadata to be set, got uri=%q sha=%q size=%d", pkg.ArtifactURI, pkg.ArtifactSHA256, pkg.ArtifactSize)
 	}
 }
 
@@ -261,6 +410,55 @@ func TestMarketplaceHandler_ListShowsRequestedStateForAdmin(t *testing.T) {
 	}
 	if len(result.Packages) != 1 || result.Packages[0].ID != "pkg-draft" {
 		t.Fatalf("packages = %#v", result.Packages)
+	}
+}
+
+func TestMarketplaceHandler_TenantIsolationForListAndGet(t *testing.T) {
+	t.Parallel()
+	h := NewMarketplaceHandler(t.TempDir())
+	tenantA := uuid.New()
+	tenantB := uuid.New()
+	_ = h.catalog.Register(context.Background(), marketplace.Package{
+		ID:          "pkg-a",
+		TenantID:    tenantA.String(),
+		Name:        "tenant-a",
+		Type:        marketplace.TypeSkill,
+		Version:     "1.0.0",
+		Description: "a",
+		ReviewState: "published",
+	})
+	_ = h.catalog.Register(context.Background(), marketplace.Package{
+		ID:          "pkg-b",
+		TenantID:    tenantB.String(),
+		Name:        "tenant-b",
+		Type:        marketplace.TypeSkill,
+		Version:     "1.0.0",
+		Description: "b",
+		ReviewState: "published",
+	})
+
+	listReq := httptest.NewRequest(http.MethodGet, "/v1/marketplace/packages", nil)
+	listReq = listReq.WithContext(store.WithTenantID(listReq.Context(), tenantA))
+	listRec := httptest.NewRecorder()
+	h.handleList(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRec.Code, http.StatusOK)
+	}
+	var result marketplace.SearchResult
+	if err := json.NewDecoder(listRec.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(result.Packages) != 1 || result.Packages[0].ID != "pkg-a" {
+		t.Fatalf("tenant-isolated list packages = %#v", result.Packages)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/v1/marketplace/packages/pkg-b", nil)
+	getReq = getReq.WithContext(store.WithTenantID(getReq.Context(), tenantA))
+	getReq.SetPathValue("id", "pkg-b")
+	getRec := httptest.NewRecorder()
+	h.handleGet(getRec, getReq)
+	if getRec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant get status = %d, want %d", getRec.Code, http.StatusNotFound)
 	}
 }
 

@@ -18,6 +18,24 @@
     "description": "确定要删除「{{name}}」吗？此操作无法撤销。",
     "confirmLabel": "删除"
   },
+  "card": {
+    "publish": "发布",
+    "published": "已发布"
+  },
+  "publishDialog": {
+    "title": "发布团队到市场",
+    "description": "将团队导出（成员、任务与各 Agent 数据）打包为 zip 内的 team-export.tar.gz。确认后上传并将团队标记为已发布。",
+    "name": "展示名称",
+    "longDescription": "描述",
+    "version": "版本",
+    "license": "许可证",
+    "author": "作者",
+    "authorPlaceholder": "可选 — 默认使用团队名称",
+    "force": "若包 ID 已存在则覆盖（重新发布）",
+    "cancel": "取消",
+    "confirm": "发布",
+    "submitting": "发布中…"
+  },
   "detail": {
     "lead": "负责人",
     "memberCount": "{{count}} 位成员",
@@ -342,7 +360,9 @@
     "failedRejectTask": "拒绝任务失败",
     "failedBulkDeleteTasks": "批量删除任务失败",
     "workspaceFileDeleted": "文件已删除",
-    "failedDeleteWorkspaceFile": "删除文件失败"
+    "failedDeleteWorkspaceFile": "删除文件失败",
+    "published": "已发布到市场",
+    "publishFailed": "发布失败"
   },
   "board": {
     "kanban": "看板",

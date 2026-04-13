@@ -40,11 +40,12 @@ func makeSchedulerRunFunc(agents *agent.Router, cfg *config.Config) scheduler.Ru
 		// The ctx from the scheduler is already cancellable; we create a child so the router's
 		// cancel func is independent from the scheduler's cancel func. Calling cancel twice is safe.
 		runCtx, cancel := context.WithCancel(ctx)
-		injectCh := agents.RegisterRun(req.RunID, req.SessionKey, agentID, cancel)
+		injectCh, interruptCh := agents.RegisterRun(req.RunID, req.SessionKey, agentID, cancel)
 		defer agents.UnregisterRun(req.RunID)
 		defer cancel()
 
 		req.InjectCh = injectCh
+		req.InterruptCh = interruptCh
 		return loop.Run(runCtx, req)
 	}
 }

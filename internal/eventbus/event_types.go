@@ -11,6 +11,8 @@ type EventType string
 
 const (
 	EventSessionCompleted EventType = "session.completed"
+	// SessionForked is emitted when POST /v1/sessions/fork copies history to a new key.
+	EventSessionForked EventType = "session.forked"
 	EventEpisodicCreated  EventType = "episodic.created"
 	EventEntityUpserted EventType = "entity.upserted"
 	EventRunCompleted   EventType = "run.completed"
@@ -53,6 +55,13 @@ type SessionCompletedPayload struct {
 	TokensUsed      int
 	Summary         string // compaction summary if available
 	CompactionCount int    // tracks how many times compaction ran
+}
+
+// SessionForkedPayload is emitted after a successful session fork (history copy).
+type SessionForkedPayload struct {
+	SourceSessionKey string
+	ForkSessionKey   string
+	MessageCount     int
 }
 
 // EpisodicCreatedPayload is emitted after episodic summary is stored.

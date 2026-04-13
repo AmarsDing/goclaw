@@ -86,8 +86,9 @@ func SignMediaPath(rawPath, secret string) string {
 	for strings.Contains(path, "/v1/media/") {
 		path = strings.Replace(path, "/v1/media/", "/", 1)
 	}
-	path = filepath.Clean(path)
-	urlPath := "/v1/files/" + strings.TrimPrefix(path, "/")
+	path = filepath.ToSlash(filepath.Clean(path))
+	path = strings.TrimPrefix(path, "/")
+	urlPath := "/v1/files/" + path
 	ft := SignFileToken(urlPath, secret, FileTokenTTL)
 	return urlPath + "?ft=" + ft
 }

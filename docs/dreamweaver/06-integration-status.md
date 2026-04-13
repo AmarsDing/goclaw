@@ -83,12 +83,12 @@ DreamWeaver 深度融合应优先通过这里做 wrapper，而不是直接侵入
 
 ### 2.3 `internal/agent/loop_pipeline_callbacks.go`
 
-这里是现有 callback 的真实实现集合。DreamWeaver 融合时，应优先“包裹已有 callback”，而不是重写整条链路。例如：
+这里是现有 callback 的**底层实现集合**（返回给 `buildPipelineDeps` 的闭包）。**DreamWeaver 的包装**（hooks、resume、`sdkBridge.Emit`、Governor、governor 前序 hook 等）主要在 **`loop_pipeline_adapter.go`** 里对 `callLLM` / `executeToolCall` / `loadSessionHistory` 等再包一层，而不是写进 `makeCallLLM` 等函数体本身。例如：
 
-- 在 `makeCallLLM()` 外包裹 pre/post think hooks
-- 在 `makeExecuteToolCall()` 外包裹 governor / lifecycle / sdk
-- 在 `makeLoadSessionHistory()` 外包裹 resume
-- 在 `makeCompactMessages()` 外包裹 DreamWeaver compression
+- 在 **`loop_pipeline_adapter.go`** 包装 `callLLM`：pre/post think hooks、`sdkBridge` 事件
+- 在同一文件包装 `executeToolCall`：Governor、Pre/Post Tool hooks、lifecycle
+- 包装 **`loadSessionHistory` 的返回值**：`resumeEng.Resume`（`makeLoadSessionHistory` 本身仍只从 session 读 history）
+- 在 `makeCompactMessages`（`loop_pipeline_callbacks.go`）或 adapter 中：`compressionEng.Compress` / `CompressToBudget`
 
 ---
 
@@ -281,14 +281,14 @@ DreamWeaver 深度融合应优先通过这里做 wrapper，而不是直接侵入
 
 > 对本仓库 **goclaw** 的变更做持续追踪：罗列提交/合并带来的代码差异，评估价值与风险，并说明对现有模块与对外行为的影响。
 
-**状态：🔴 未实现**
+**状态：🟢 基线已实现（P0–P1）**；托管 API 增强、PR 评论、Webhook 为 P2+（见 [08](./08-goclaw-repo-tracking.md) §9）。
 
 
 | 子项               | 状态     | 说明                                                                                   |
 | ---------------- | ------ | ------------------------------------------------------------------------------------ |
-| 本仓库变更抓取          | 🔴 未实现 | 基于 git（或 CI）对主分支/发布分支的 commit、PR、tag 做 diff 与文件级变更清单                                 |
-| 变更价值评估           | 🔴 未实现 | 对每次合并或发布自动归类（安全/性能/新功能/破坏性/文档），输出简要影响结论                                              |
-| 与模块映射            | 🔴 未实现 | 将变更路径映射到子系统（如 `internal/agent`、`internal/tools`、`internal/mcp`、DreamWeaver 等），标注受影响面 |
-| 变更通知 / changelog | 🔴 未实现 | 在 CI 或定时任务中生成人可读 changelog（Markdown），可选通知到 issue/IM                                  |
+| 本仓库变更抓取          | 🟢 已实现 | **`goclaw changelog`**：`git log`、`git diff --name-status`、`git diff --stat`；`BASE_REF` / `HEAD_REF` |
+| 变更价值评估           | 🟡 启发式 | **Risk flags**（路径规则：迁移、`pkg/`、权限/工具、网关 HTTP、前端、纯文档等）；非 LLM 深度分析 |
+| 与模块映射            | 🟢 已实现 | **`internal/changelog/subsystems.yaml`** → 报告 **Files by subsystem** |
+| 变更通知 / changelog | 🟡 可选 CI | Markdown  stdout；**`--json`**；可选 workflow 上传 artifact；IM / PR 机器人未内置 |
 
 

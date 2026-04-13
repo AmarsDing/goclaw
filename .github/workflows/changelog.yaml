@@ -1,0 +1,41 @@
+# Optional: generate goclaw changelog artifact (see docs/dreamweaver/08-goclaw-repo-tracking.md).
+name: Changelog
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Markdown + JSON (PR range)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.sha }}
+        run: |
+          go run . changelog > changelog.md
+          go run . changelog --json > changelog.json
+      - name: Markdown + JSON (last commit)
+        if: github.event_name != 'pull_request'
+        run: |
+          go run . changelog --from HEAD~1 --to HEAD > changelog.md
+          go run . changelog --json --from HEAD~1 --to HEAD > changelog.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: |
+            changelog.md
+            changelog.json

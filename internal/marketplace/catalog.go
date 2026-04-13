@@ -21,6 +21,7 @@ type PackageType string
 const (
 	TypeSkill  PackageType = "skill"
 	TypeAgent  PackageType = "agent"
+	TypeTeam   PackageType = "team"
 	TypeMCP    PackageType = "mcp_server"
 	TypePlugin PackageType = "plugin"
 )
@@ -28,6 +29,7 @@ const (
 // Package is a marketplace listing.
 type Package struct {
 	ID          string      `json:"id"`
+	TenantID    string      `json:"tenant_id,omitempty"`
 	Name        string      `json:"name"`
 	Type        PackageType `json:"type"`
 	Description string      `json:"description"`
@@ -43,10 +45,14 @@ type Package struct {
 	RatingCount int         `json:"rating_count"`
 	ReviewState string      `json:"review_state,omitempty"` // pending_review, approved, rejected, published
 	ReviewNote  string      `json:"review_note,omitempty"`  // reject/approval note
+	ArtifactURI string      `json:"artifact_uri,omitempty"` // remote object storage URI for staged/published artifact
+	ArtifactSHA256 string   `json:"artifact_sha256,omitempty"`
+	ArtifactSize int64      `json:"artifact_size,omitempty"`
 	Pricing     Pricing     `json:"pricing"`
 	CreatedAt   time.Time   `json:"created_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
-	Verified    bool        `json:"verified"` // reviewed by platform team
+	Verified       bool   `json:"verified"` // reviewed by platform team
+	ReadmeMarkdown string `json:"readme_markdown,omitempty"`
 }
 
 // Pricing describes the cost model.
@@ -89,6 +95,7 @@ type SearchQuery struct {
 	SortBy      string      `json:"sort_by,omitempty"` // "downloads", "rating", "updated", "name"
 	Limit       int         `json:"limit,omitempty"`
 	Offset      int         `json:"offset,omitempty"`
+	TenantID    string      `json:"tenant_id,omitempty"`
 }
 
 // SearchResult is a paginated search response.
@@ -112,6 +119,13 @@ func NewCatalog() *Catalog {
 		packages: make(map[string]*Package),
 		reviews:  make(map[string][]Review),
 	}
+}
+
+// PackageCount returns the number of indexed packages.
+func (c *Catalog) PackageCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.packages)
 }
 
 // Register adds or updates a package in the catalog.
@@ -295,6 +309,9 @@ func (c *Catalog) ListReviews(packageID string) ([]Review, error) {
 }
 
 func matchesQuery(pkg *Package, q SearchQuery) bool {
+	if q.TenantID != "" && pkg.TenantID != "" && pkg.TenantID != q.TenantID {
+		return false
+	}
 	if q.Type != "" && pkg.Type != q.Type {
 		return false
 	}

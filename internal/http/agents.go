@@ -43,6 +43,7 @@ type AgentsHandler struct {
 	msgBus           *bus.MessageBus          // for cache invalidation events (nil = no events)
 	summoner         *AgentSummoner           // LLM-based agent setup (nil = disabled)
 	isOwner          func(string) bool        // checks if user ID is a system owner (nil = no owners configured)
+	marketplace      *MarketplaceHandler      // optional; set via SetMarketplaceHandler for agent marketplace publish
 }
 
 // NewAgentsHandler creates a handler for agent management endpoints.
@@ -148,6 +149,10 @@ func (h *AgentsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/agents/{id}/export/download/{token}", h.authMiddleware(h.handleExportDownload))
 	// Shared download route for all export types (skills, MCP, teams use same token map)
 	mux.HandleFunc("GET /v1/export/download/{token}", h.authMiddleware(h.handleExportDownload))
+	// Publish agent bundle to marketplace (same role rules as package upload)
+	mux.HandleFunc("POST /v1/agents/{id}/marketplace/publish", h.marketplacePublishMiddleware(h.handleAgentMarketplacePublish))
+	// Publish team export to marketplace (same role rules as team export)
+	mux.HandleFunc("POST /v1/teams/{id}/marketplace/publish", h.marketplacePublishMiddleware(h.handleTeamMarketplacePublish))
 	// Import (admin only — system owner or tenant admin)
 	mux.HandleFunc("POST /v1/agents/import/preview", h.adminMiddleware(h.handleImportPreview))
 	mux.HandleFunc("POST /v1/agents/import", h.adminMiddleware(h.handleImport))

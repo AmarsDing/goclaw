@@ -39,7 +39,7 @@ func (s *CheckpointStage) Execute(ctx context.Context, state *RunState) error {
 
 	if err := s.deps.FlushMessages(ctx, state.Input.SessionKey, pending); err != nil {
 		// Non-fatal: messages moved to history by FlushPending, will be flushed by FinalizeStage.
-		slog.Warn("checkpoint flush failed", "err", err, "iteration", state.Iteration)
+		slog.Warn("checkpoint flush failed", "error", err, "iteration", state.Iteration)
 		return nil
 	}
 

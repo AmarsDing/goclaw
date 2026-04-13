@@ -15,6 +15,9 @@ const (
 	EventSessionStart Event = "session.start"
 	EventSessionEnd   Event = "session.end"
 
+	// User input (fired before the agent processes a new user message)
+	EventUserPromptSubmit Event = "user_prompt_submit"
+
 	// Think stage
 	EventPreThink  Event = "pre_think"
 	EventPostThink Event = "post_think"
@@ -27,9 +30,20 @@ const (
 	EventPrePermission  Event = "pre_permission"
 	EventPostPermission Event = "post_permission"
 
-	// Context management
-	EventOnCompact Event = "on_compact"
-	EventOnResume  Event = "on_resume"
+	// Context compaction — split into pre/post for hook participation.
+	// EventOnCompact is kept for backward-compatibility and fires on any compaction.
+	EventOnCompact   Event = "on_compact"
+	EventPreCompact  Event = "pre_compact"
+	EventPostCompact Event = "post_compact"
+
+	EventOnResume Event = "on_resume"
+
+	// Subagent lifecycle (fired by coordinator/team runs)
+	EventSubagentStart Event = "subagent.start"
+	EventSubagentStop  Event = "subagent.stop"
+
+	// Session fork (fired by POST /v1/sessions/fork after successful copy)
+	EventSessionFork Event = "session.fork"
 
 	// Error handling
 	EventOnError Event = "on_error"
@@ -41,10 +55,14 @@ const (
 // AllEvents is the complete set of hook events.
 var AllEvents = []Event{
 	EventSessionStart, EventSessionEnd,
+	EventUserPromptSubmit,
 	EventPreThink, EventPostThink,
 	EventPreToolUse, EventPostToolUse,
 	EventPrePermission, EventPostPermission,
-	EventOnCompact, EventOnResume,
+	EventOnCompact, EventPreCompact, EventPostCompact,
+	EventOnResume,
+	EventSubagentStart, EventSubagentStop,
+	EventSessionFork,
 	EventOnError, EventLifecycleChange,
 }
 
@@ -64,6 +82,37 @@ type Payload struct {
 	SessionKey string         `json:"session_key"`
 	Timestamp  time.Time      `json:"timestamp"`
 	Data       map[string]any `json:"data,omitempty"`
+	// TypedData holds the same information as Data but in a typed struct
+	// (e.g. ToolPayload, ThinkPayload). Hook handlers may type-assert it
+	// instead of accessing the loosely-typed Data map.
+	TypedData any `json:"typed_data,omitempty"`
+}
+
+// AsTyped extracts the TypedData field as type T.
+// Returns the zero value of T and false when TypedData is nil or the wrong type.
+func AsTyped[T any](p Payload) (T, bool) {
+	v, ok := p.TypedData.(T)
+	return v, ok
+}
+
+// asMappable is the internal interface for payload structs that can produce a Data map.
+type asMappable interface {
+	AsMap() map[string]any
+}
+
+// NewPayload constructs a Payload with both TypedData and its backward-compatible Data map
+// populated from a typed payload struct. All hook-firing sites should use this constructor
+// instead of building Payload literals with manual AsMap() calls.
+func NewPayload(event Event, runID, agentID, sessionKey string, typedPayload asMappable) Payload {
+	return Payload{
+		Event:      event,
+		RunID:      runID,
+		AgentID:    agentID,
+		SessionKey: sessionKey,
+		Timestamp:  time.Now(),
+		Data:       typedPayload.AsMap(),
+		TypedData:  typedPayload,
+	}
 }
 
 // Result is the response from a hook execution.
@@ -139,6 +188,39 @@ type PermissionPayload struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 	Action    string         `json:"action,omitempty"`
 	Reason    string         `json:"reason,omitempty"`
+}
+
+// UserPromptPayload is the typed body for user_prompt_submit hooks.
+// Sync hooks returning ResultActionBlock prevent the prompt from entering the agent loop;
+// sync hooks returning ResultActionModify may update the Message field.
+type UserPromptPayload struct {
+	Message  string `json:"message"`
+	Channel  string `json:"channel,omitempty"`
+	RunKind  string `json:"run_kind,omitempty"`
+	UserID   string `json:"user_id,omitempty"`
+	HideInput bool  `json:"hide_input,omitempty"`
+}
+
+// SubagentPayload is the typed body for subagent lifecycle hooks.
+type SubagentPayload struct {
+	SubagentID   string `json:"subagent_id,omitempty"`
+	SubagentKind string `json:"subagent_kind,omitempty"` // "delegation", "team", "fork"
+	ParentRunID  string `json:"parent_run_id,omitempty"`
+}
+
+// SessionForkPayload is the typed body for session.fork hooks.
+type SessionForkPayload struct {
+	SourceSessionKey string `json:"source_session_key"`
+	ForkSessionKey   string `json:"fork_session_key"`
+	MessageCount     int    `json:"message_count"`
+}
+
+func (p SessionForkPayload) AsMap() map[string]any {
+	return map[string]any{
+		"source_session_key": p.SourceSessionKey,
+		"fork_session_key":   p.ForkSessionKey,
+		"message_count":      p.MessageCount,
+	}
 }
 
 // CompactPayload is the typed body for compaction hooks.
@@ -231,6 +313,24 @@ func (p PermissionPayload) AsMap() map[string]any {
 		"arguments":  p.Arguments,
 		"action":     p.Action,
 		"reason":     p.Reason,
+	}
+}
+
+func (p UserPromptPayload) AsMap() map[string]any {
+	return map[string]any{
+		"message":    p.Message,
+		"channel":    p.Channel,
+		"run_kind":   p.RunKind,
+		"user_id":    p.UserID,
+		"hide_input": p.HideInput,
+	}
+}
+
+func (p SubagentPayload) AsMap() map[string]any {
+	return map[string]any{
+		"subagent_id":   p.SubagentID,
+		"subagent_kind": p.SubagentKind,
+		"parent_run_id": p.ParentRunID,
 	}
 }
 

@@ -1,11 +1,11 @@
-import { Bot, Star, Trash2, RotateCcw, Sparkles } from "lucide-react";
+import { Bot, Star, Trash2, RotateCcw, Sparkles, Rocket } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AgentData } from "@/types/agent";
 import { cn } from "@/lib/utils";
-import { UUID_RE, agentDisplayName, hasActiveChatGPTOAuthRouting, readPromptMode } from "./agent-detail/agent-display-utils";
+import { UUID_RE, agentDisplayName, hasActiveChatGPTOAuthRouting, readMarketplacePublished, readPromptMode } from "./agent-detail/agent-display-utils";
 import { promptModeBadgeClass } from "./agent-detail/prompt-mode-badge-utils";
 
 interface AgentListRowProps {
@@ -13,16 +13,18 @@ interface AgentListRowProps {
   ownerName?: string;
   onClick: () => void;
   onResummon?: () => void;
+  onPublish?: () => void;
   onDelete?: () => void;
 }
 
-export function AgentListRow({ agent, ownerName, onClick, onResummon, onDelete }: AgentListRowProps) {
+export function AgentListRow({ agent, ownerName, onClick, onResummon, onPublish, onDelete }: AgentListRowProps) {
   const { t } = useTranslation("agents");
   const displayName = agentDisplayName(agent, t("card.unnamedAgent"));
   const selfEvolve = agent.agent_type === "predefined" && Boolean(agent.self_evolve);
   const emoji = agent.emoji ?? "";
   const hasOAuthRouting = hasActiveChatGPTOAuthRouting(agent.chatgpt_oauth_routing);
   const promptMode = readPromptMode(agent);
+  const marketplacePublished = readMarketplacePublished(agent);
 
   return (
     <button
@@ -97,6 +99,11 @@ export function AgentListRow({ agent, ownerName, onClick, onResummon, onDelete }
             {t("chatgptOAuthRouting.badge")}
           </Badge>
         )}
+        {marketplacePublished && (
+          <Badge variant="secondary" className="border-primary/30 bg-primary/10 text-xs-plus text-primary">
+            {t("card.published")}
+          </Badge>
+        )}
       </div>
 
       {/* Owner */}
@@ -122,6 +129,17 @@ export function AgentListRow({ agent, ownerName, onClick, onResummon, onDelete }
             onClick={(e) => { e.stopPropagation(); onResummon(); }}
           >
             <RotateCcw className="h-3 w-3" />
+          </Button>
+        )}
+        {onPublish && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-muted-foreground hover:text-primary"
+            onClick={(e) => { e.stopPropagation(); onPublish(); }}
+            title={t("card.publish")}
+          >
+            <Rocket className="h-3.5 w-3.5" />
           </Button>
         )}
         {onDelete && (

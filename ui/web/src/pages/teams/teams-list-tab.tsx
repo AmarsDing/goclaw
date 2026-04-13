@@ -13,6 +13,8 @@ import { useTeams } from "./hooks/use-teams";
 import { TeamCard } from "./team-card";
 import { TeamListRow } from "./team-list-row";
 import { TeamCreateDialog } from "./team-create-dialog";
+import { TeamPublishDialog } from "./team-publish-dialog";
+import type { TeamData } from "@/types/team";
 import { usePagination } from "@/hooks/use-pagination";
 
 interface TeamsListTabProps {
@@ -22,13 +24,14 @@ interface TeamsListTabProps {
 export function TeamsListTab({ onSelectTeam }: TeamsListTabProps) {
   const { t } = useTranslation("teams");
   const { t: tc } = useTranslation("common");
-  const { teams, loading, load, createTeam, deleteTeam } = useTeams();
+  const { teams, loading, load, createTeam, deleteTeam, publishTeamToMarketplace } = useTeams();
   const showSkeleton = useDeferredLoading(loading && teams.length === 0);
 
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [publishTarget, setPublishTarget] = useState<TeamData | null>(null);
 
   useEffect(() => { load(); }, [load]);
 
@@ -87,13 +90,25 @@ export function TeamsListTab({ onSelectTeam }: TeamsListTabProps) {
               {viewMode === "card" ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {pageItems.map((team) => (
-                    <TeamCard key={team.id} team={team} onClick={() => onSelectTeam(team.id)} onDelete={() => setDeleteTarget({ id: team.id, name: team.name })} />
+                    <TeamCard
+                      key={team.id}
+                      team={team}
+                      onClick={() => onSelectTeam(team.id)}
+                      onPublish={() => setPublishTarget(team)}
+                      onDelete={() => setDeleteTarget({ id: team.id, name: team.name })}
+                    />
                   ))}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   {pageItems.map((team) => (
-                    <TeamListRow key={team.id} team={team} onClick={() => onSelectTeam(team.id)} onDelete={() => setDeleteTarget({ id: team.id, name: team.name })} />
+                    <TeamListRow
+                      key={team.id}
+                      team={team}
+                      onClick={() => onSelectTeam(team.id)}
+                      onPublish={() => setPublishTarget(team)}
+                      onDelete={() => setDeleteTarget({ id: team.id, name: team.name })}
+                    />
                   ))}
                 </div>
               )}
@@ -106,6 +121,18 @@ export function TeamsListTab({ onSelectTeam }: TeamsListTabProps) {
       </div>
 
       <TeamCreateDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={async (data) => { await createTeam(data); }} />
+
+      <TeamPublishDialog
+        open={!!publishTarget}
+        onOpenChange={(open) => {
+          if (!open) setPublishTarget(null);
+        }}
+        team={publishTarget}
+        onConfirm={async (payload) => {
+          if (!publishTarget) return;
+          await publishTeamToMarketplace(publishTarget.id, payload);
+        }}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget}

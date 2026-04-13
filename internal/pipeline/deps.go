@@ -6,6 +6,7 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/bootstrap"
 	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/eventbus"
+	"github.com/nextlevelbuilder/goclaw/internal/memory"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/tokencount"
 	"github.com/nextlevelbuilder/goclaw/internal/workspace"
@@ -31,7 +32,14 @@ type PipelineDeps struct {
 	// a short snippet of recent conversation (last 1-2 user turns) so the
 	// downstream recall query can resolve pronouns and implicit references.
 	// Empty recentContext = legacy single-message search semantics.
-	AutoInject func(ctx context.Context, userMessage, userID, recentContext string) (string, error)
+	// Summaries may be nil when nothing was injected or the injector does not populate them.
+	AutoInject func(ctx context.Context, userMessage, userID, recentContext string) (section string, summaries []memory.L0Summary, err error)
+
+	// MemoryDriftTick advances per-iteration drift tracking after L0 injection (ThinkStage, iteration >= 1).
+	MemoryDriftTick func()
+
+	// MemoryDriftCheck runs after Tick when ShouldRefresh(); uses DriftDetector.CheckDrift (optional).
+	MemoryDriftCheck func(ctx context.Context, state *RunState) error
 
 	// InjectContext sets up agent/tenant/user/workspace/tool context values.
 	// Wraps injectContext() for v3 pipeline. Called once at ContextStage start.
@@ -71,7 +79,19 @@ type PipelineDeps struct {
 	// ProcessToolResult processes a raw tool result with state mutation (sequential only).
 	ProcessToolResult func(ctx context.Context, state *RunState, tc providers.ToolCall, rawMsg providers.Message, rawData any) []providers.Message
 	// ToolConcurrencySafe returns true when a tool can execute in parallel.
-	ToolConcurrencySafe func(toolName string) bool
+	// args carries the parsed tool call arguments so that concurrency safety
+	// can be determined per-input (e.g. a Bash rm is unsafe, but Bash ls is safe).
+	// Implementations may ignore args for simple name-based rules.
+	ToolConcurrencySafe func(toolName string, args map[string]any) bool
+	// ToolInterruptBehavior returns "cancel" or "block" for policy lookup (optional).
+	// Nil = all tools behave as cancel. Runtime routing is applied in agent.Loop.toolExecutionContext:
+	// InterruptBlock tools run under context.WithoutCancel so user cancel does not abort the tool.
+	ToolInterruptBehavior func(toolName string, args map[string]any) string
+	// InterruptCh is an optional soft-interrupt signal channel (capacity 1, set by the
+	// run adapter). During executeParallel, a value received here causes only the
+	// InterruptCancel-group tool contexts to be cancelled; InterruptBlock tools run
+	// to completion. The channel is not drained here — just used for a one-shot signal.
+	InterruptCh <-chan struct{}
 	// CheckReadOnly checks read-only streak. Returns warning message (if any) and whether to break.
 	CheckReadOnly func(state *RunState) (*providers.Message, bool)
 

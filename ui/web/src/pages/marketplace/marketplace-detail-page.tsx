@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
+import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ArrowLeft, Download, Heart, MessageSquarePlus, RefreshCw, Star } from "lucide-react";
 import { DetailPageSkeleton } from "@/components/shared/loading-skeleton";
 import { PageHeader } from "@/components/shared/page-header";
@@ -13,8 +16,20 @@ import { ROUTES } from "@/lib/constants";
 import { type MarketplaceReview, useMarketplacePackage } from "./hooks/use-marketplace";
 
 export function MarketplaceDetailPage() {
+  const { t } = useTranslation("marketplace");
   const { id } = useParams();
-  const { pkg, installed, loading, refresh, installPackage, likePackage, loadReviews, addReview } = useMarketplacePackage(id);
+  const {
+    pkg,
+    installed,
+    loading,
+    refresh,
+    installPackage,
+    likePackage,
+    loadReviews,
+    addReview,
+    startTrial,
+    purchaseDev,
+  } = useMarketplacePackage(id);
   const [reviews, setReviews] = useState<MarketplaceReview[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [rating, setRating] = useState("5");
@@ -22,6 +37,8 @@ export function MarketplaceDetailPage() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [liking, setLiking] = useState(false);
+  const [trialing, setTrialing] = useState(false);
+  const [granting, setGranting] = useState(false);
 
   useEffect(() => {
     if (!pkg?.id) {
@@ -68,19 +85,17 @@ export function MarketplaceDetailPage() {
     return (
       <div className="space-y-6 p-4 sm:p-6">
         <PageHeader
-          title="Marketplace package"
-          description="The requested package could not be found or is not visible with your current role."
+          title={t("detail.notFoundTitle")}
+          description={t("detail.notFoundDesc")}
         />
         <Alert>
-          <AlertTitle>Package unavailable</AlertTitle>
-          <AlertDescription>
-            Go back to the marketplace list and pick another published package.
-          </AlertDescription>
+          <AlertTitle>{t("detail.unavailableTitle")}</AlertTitle>
+          <AlertDescription>{t("detail.unavailableBody")}</AlertDescription>
         </Alert>
         <Button asChild variant="outline">
           <Link to={ROUTES.MARKETPLACE}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to marketplace
+            {t("detail.backToList")}
           </Link>
         </Button>
       </div>
@@ -90,7 +105,9 @@ export function MarketplaceDetailPage() {
   const p = pkg;
 
   const requiresEntitlement = !!p.pricing?.model && p.pricing.model !== "free";
-  const installDisabled = installed || installing || requiresEntitlement || p.review_state !== "published";
+  const trialDays = p.pricing?.trial_days ?? 0;
+  const installDisabled =
+    installed || installing || requiresEntitlement || p.review_state !== "published";
 
   async function handleInstall() {
     setInstalling(true);
@@ -98,6 +115,26 @@ export function MarketplaceDetailPage() {
       await installPackage(p);
     } finally {
       setInstalling(false);
+    }
+  }
+
+  async function handleTrial() {
+    setTrialing(true);
+    try {
+      await startTrial(p);
+      await refresh();
+    } finally {
+      setTrialing(false);
+    }
+  }
+
+  async function handleGrantDev() {
+    setGranting(true);
+    try {
+      await purchaseDev(p);
+      await refresh();
+    } finally {
+      setGranting(false);
     }
   }
 
@@ -131,18 +168,18 @@ export function MarketplaceDetailPage() {
     <div className="space-y-6 p-4 sm:p-6">
       <PageHeader
         title={p.name}
-        description={p.description || "Marketplace package details"}
+        description={p.description || t("subtitle")}
         actions={
           <div className="flex items-center gap-2">
             <Button asChild variant="outline" size="sm">
               <Link to={ROUTES.MARKETPLACE}>
                 <ArrowLeft className="mr-2 h-4 w-4" />
-                Back
+                {t("detail.back")}
               </Link>
             </Button>
             <Button variant="outline" size="sm" onClick={refresh} disabled={loading || loadingReviews}>
               <RefreshCw className={`mr-2 h-4 w-4 ${loading || loadingReviews ? "animate-spin" : ""}`} />
-              Refresh
+              {t("refresh")}
             </Button>
           </div>
         }
@@ -152,7 +189,7 @@ export function MarketplaceDetailPage() {
         <Card>
           <CardHeader className="gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant={installed ? "success" : "outline"}>{installed ? "Installed" : p.type}</Badge>
+              <Badge variant={installed ? "success" : "outline"}>{installed ? t("detail.installed") : p.type}</Badge>
               <Badge variant={p.review_state === "published" ? "success" : "warning"}>
                 {p.review_state || "pending_review"}
               </Badge>
@@ -161,27 +198,36 @@ export function MarketplaceDetailPage() {
               {p.ref ? <Badge variant="outline">ref {p.ref}</Badge> : null}
             </div>
             <CardDescription>
-              Published by {p.author || "Unknown author"}
+              {t("detail.publishedBy", { author: p.author || t("detail.unknownAuthor") })}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-3">
-              <MetricCard label="Downloads" value={String(p.downloads ?? 0)} />
-              <MetricCard label="Likes" value={String(p.likes ?? 0)} />
-              <MetricCard label="Rating" value={`${p.rating?.toFixed(1) ?? "0.0"} / 5`} />
+              <MetricCard label={t("detail.downloads")} value={String(p.downloads ?? 0)} />
+              <MetricCard label={t("detail.likes")} value={String(p.likes ?? 0)} />
+              <MetricCard label={t("detail.rating")} value={`${p.rating?.toFixed(1) ?? "0.0"} / 5`} />
             </div>
 
             <Separator />
 
             <section className="space-y-2">
-              <h2 className="text-sm font-medium">Description</h2>
+              <h2 className="text-sm font-medium">{t("detail.description")}</h2>
               <p className="text-sm text-muted-foreground">
-                {p.description || "No description provided."}
+                {p.description || t("detail.noDescription")}
               </p>
             </section>
 
+            {(p.readme_markdown?.trim() ?? "").length > 0 ? (
+              <section className="space-y-2">
+                <h2 className="text-sm font-medium">{t("detail.readme")}</h2>
+                <div className="prose prose-sm dark:prose-invert max-w-none rounded-md border bg-muted/20 p-4">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.readme_markdown ?? ""}</ReactMarkdown>
+                </div>
+              </section>
+            ) : null}
+
             <section className="space-y-2">
-              <h2 className="text-sm font-medium">Compatibility</h2>
+              <h2 className="text-sm font-medium">{t("detail.compatibility")}</h2>
               <div className="flex flex-wrap gap-2">
                 <Badge variant="outline">Type: {p.type}</Badge>
                 {p.pricing?.model ? <Badge variant="outline">Billing: {p.pricing.model}</Badge> : null}
@@ -189,14 +235,32 @@ export function MarketplaceDetailPage() {
               </div>
             </section>
           </CardContent>
-          <CardFooter className="justify-end gap-2">
+          <CardFooter className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" size="sm" onClick={handleLike} disabled={liking}>
               <Heart className="mr-2 h-4 w-4" />
-              {liking ? "Liking..." : "Like"}
+              {liking ? t("detail.liking") : t("detail.like")}
             </Button>
+            {requiresEntitlement && trialDays > 0 ? (
+              <Button variant="secondary" size="sm" onClick={handleTrial} disabled={trialing || installed}>
+                {trialing ? t("detail.trialStarting") : t("detail.startTrial")}
+              </Button>
+            ) : null}
+            {requiresEntitlement ? (
+              <Button variant="secondary" size="sm" onClick={handleGrantDev} disabled={granting || installed}>
+                {granting ? t("detail.granting") : t("detail.grantDev")}
+              </Button>
+            ) : null}
             <Button size="sm" onClick={handleInstall} disabled={installDisabled}>
               <Download className="mr-2 h-4 w-4" />
-              {installed ? "Installed" : p.review_state !== "published" ? "Not published" : requiresEntitlement ? "Requires purchase" : installing ? "Installing..." : "Install"}
+              {installed
+                ? t("detail.installed")
+                : p.review_state !== "published"
+                  ? t("detail.notPublished")
+                  : requiresEntitlement
+                    ? t("detail.requiresPurchase")
+                    : installing
+                      ? t("detail.installing")
+                      : t("detail.install")}
             </Button>
           </CardFooter>
         </Card>
@@ -205,18 +269,16 @@ export function MarketplaceDetailPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <MessageSquarePlus className="h-4 w-4" />
-              Reviews
+              {t("detail.reviews")}
             </CardTitle>
-            <CardDescription>
-              Read feedback from other users and leave your own rating.
-            </CardDescription>
+            <CardDescription>{t("detail.reviewsDesc")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-3">
               {loadingReviews ? (
-                <p className="text-sm text-muted-foreground">Loading reviews...</p>
+                <p className="text-sm text-muted-foreground">{t("detail.loadingReviews")}</p>
               ) : reviews.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No reviews yet.</p>
+                <p className="text-sm text-muted-foreground">{t("detail.noReviews")}</p>
               ) : (
                 reviews.map((review) => (
                   <div key={review.id} className="rounded-md border bg-muted/30 p-3">
@@ -238,7 +300,7 @@ export function MarketplaceDetailPage() {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <label className="text-xs text-muted-foreground" htmlFor="marketplace-review-rating">
-                  Rating
+                  {t("detail.starRating")}
                 </label>
                 <select
                   id="marketplace-review-rating"
@@ -254,11 +316,11 @@ export function MarketplaceDetailPage() {
               <Textarea
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
-                placeholder="Share what worked well, what is missing, and how this package behaved locally."
+                placeholder={t("detail.reviewPlaceholder")}
                 rows={5}
               />
               <Button onClick={handleReviewSubmit} disabled={submittingReview || !comment.trim()}>
-                {submittingReview ? "Submitting..." : "Submit review"}
+                {submittingReview ? t("detail.submitting") : t("detail.submitReview")}
               </Button>
             </div>
           </CardContent>

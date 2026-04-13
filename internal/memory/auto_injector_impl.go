@@ -69,6 +69,7 @@ func (a *pgAutoInjector) Inject(ctx context.Context, params InjectParams) (*Inje
 
 	injected := 0
 	var topScore float64
+	var summaries []L0Summary
 	for _, r := range results {
 		if injected >= maxEntries {
 			break
@@ -83,6 +84,11 @@ func (a *pgAutoInjector) Inject(ctx context.Context, params InjectParams) (*Inje
 		if r.Score > topScore {
 			topScore = r.Score
 		}
+		summaries = append(summaries, L0Summary{
+			Topic:   "episodic",
+			Summary: r.L0Abstract,
+			ID:      r.EpisodicID,
+		})
 	}
 
 	if injected == 0 {
@@ -94,6 +100,7 @@ func (a *pgAutoInjector) Inject(ctx context.Context, params InjectParams) (*Inje
 		MatchCount: len(results),
 		Injected:   injected,
 		TopScore:   topScore,
+		Summaries:  summaries,
 	}
 
 	// Record retrieval metric non-blocking (best-effort).

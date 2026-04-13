@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
+	"github.com/nextlevelbuilder/goclaw/internal/message"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/workspace"
 )
@@ -37,6 +38,11 @@ type RunState struct {
 	Iteration int
 	RunID     string
 	ExitCode  StageResult
+
+	// Transcript is the authoritative multi-view session record populated by FinalizeStage
+	// from Messages.All(). Nil until FinalizeStage runs. Consumers can call ForUI / ForAPI /
+	// ForResume to derive views without mutating the source.
+	Transcript *message.Transcript
 }
 
 // NewRunState creates a RunState with identity fields set.

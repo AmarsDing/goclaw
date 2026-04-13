@@ -1,0 +1,56 @@
+# Path prefix → subsystem label for goclaw changelog reports (more specific prefixes first).
+mappings:
+  - prefix: internal/agent
+    name: Agent Loop / pipeline
+  - prefix: internal/pipeline
+    name: Pipeline stages
+  - prefix: internal/spirit
+    name: Spirit
+  - prefix: internal/store
+    name: Storage
+  - prefix: internal/mcp
+    name: MCP bridge
+  - prefix: internal/gateway
+    name: Gateway
+  - prefix: internal/http
+    name: HTTP API
+  - prefix: internal/config
+    name: Configuration
+  - prefix: internal/tools
+    name: Tools / exec
+  - prefix: internal/permissions
+    name: Permissions
+  - prefix: internal/hooks
+    name: Hooks
+  - prefix: internal/memory
+    name: Memory / drift
+  - prefix: internal/consolidation
+    name: Consolidation (topics / daily)
+  - prefix: internal/compression
+    name: Compression
+  - prefix: internal/lifecycle
+    name: Lifecycle
+  - prefix: internal/message
+    name: Message / transcript
+  - prefix: internal/resume
+    name: Resume
+  - prefix: internal/marketplace
+    name: Marketplace
+  - prefix: internal/workshop
+    name: Workshop (织梦坊)
+  - prefix: internal/alchemy
+    name: Alchemy (炼化)
+  - prefix: internal/plugins
+    name: Plugins
+  - prefix: pkg/sdk
+    name: SDK (pkg/sdk)
+  - prefix: migrations
+    name: Database migrations
+  - prefix: ui/web
+    name: Web UI
+  - prefix: cmd
+    name: CLI
+  - prefix: docs
+    name: Documentation
+  - prefix: pkg/
+    name: Public packages (pkg/)

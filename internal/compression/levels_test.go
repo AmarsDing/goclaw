@@ -96,3 +96,18 @@ func TestL1SnipsOldToolResults(t *testing.T) {
 		t.Error("last tool result should be kept intact")
 	}
 }
+
+func TestSkipLeadingSystemRoles(t *testing.T) {
+	msgs := []providers.Message{
+		{Role: "system", Content: "a"},
+		{Role: "system", Content: "b"},
+		{Role: "user", Content: "u"},
+	}
+	rest := skipLeadingSystemRoles(msgs)
+	if len(rest) != 1 || rest[0].Content != "u" {
+		t.Fatalf("got %+v", rest)
+	}
+	if len(skipLeadingSystemRoles([]providers.Message{{Role: "system", Content: "x"}})) != 0 {
+		t.Fatal("all-system slice should become empty")
+	}
+}

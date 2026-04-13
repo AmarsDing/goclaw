@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 
 	"github.com/nextlevelbuilder/goclaw/internal/bus"
@@ -132,9 +133,23 @@ func (d *gatewayDeps) wireHTTPHandlersOnServer(
 
 	// Runtime package management (install/uninstall system/pip/npm packages)
 	d.server.SetPackagesHandler(httpapi.NewPackagesHandler())
-	d.server.SetMarketplaceHandler(httpapi.NewMarketplaceHandler(d.dataDir))
+	var mpDB *sql.DB
+	if d.pgStores != nil && d.pgStores.DB != nil {
+		mpDB = d.pgStores.DB
+	}
+	mpHandler := httpapi.NewMarketplaceHandlerWithOptions(httpapi.MarketplaceHandlerOptions{
+		DataDir: d.dataDir,
+		DB:      mpDB,
+	})
+	if h.agents != nil {
+		h.agents.SetMarketplaceHandler(mpHandler)
+	}
+	d.server.SetMarketplaceHandler(mpHandler)
 	if d.pgStores != nil && d.pgStores.DB != nil {
 		d.server.SetFeedbackHandler(httpapi.NewFeedbackHandler(d.pgStores.DB))
+	}
+	if d.pgStores != nil && d.pgStores.Sessions != nil {
+		d.server.SetSessionForkHandler(httpapi.NewSessionForkHandler(d.pgStores.Sessions, d.domainBus))
 	}
 
 	// API documentation (OpenAPI spec + Swagger UI at /docs)

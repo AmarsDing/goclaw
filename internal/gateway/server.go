@@ -29,6 +29,16 @@ import (
 	"github.com/nextlevelbuilder/goclaw/pkg/protocol"
 )
 
+// writeGatewayError writes a structured JSON error response from within the gateway package.
+// Uses the same `{"error":{"code","message"}}` envelope as httpapi.writeError so all API
+// surfaces have a consistent error shape. gateway cannot import internal/http (wrong direction),
+// so this tiny helper replicates the format without a dependency.
+func writeGatewayError(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `{"error":{"code":%q,"message":%q}}`, code, msg)
+}
+
 // Server is the main gateway server handling WebSocket and HTTP connections.
 // routeRegistrar is implemented by all HTTP API handlers that register routes on a mux.
 type routeRegistrar interface {
@@ -50,9 +60,10 @@ type Server struct {
 	// Non-handler dependencies (don't implement RegisterRoutes)
 	policyEngine   *permissions.PolicyEngine
 	pairingService store.PairingStore
-	apiKeyStore    store.APIKeyStore // for API key auth lookup
-	agentStore     store.AgentStore  // for context injection in tools_invoke
-	msgBus         *bus.MessageBus   // for MCP bridge media delivery
+	apiKeyStore    store.APIKeyStore      // for API key auth lookup
+	agentStore     store.AgentStore       // for context injection in tools_invoke
+	msgBus         *bus.MessageBus        // for MCP bridge media delivery
+	bridgeServer   *mcpbridge.BridgeServer // nil when bridge disabled; for RefreshTools()
 
 	upgrader    websocket.Upgrader
 	rateLimiter *RateLimiter
@@ -183,18 +194,27 @@ func (s *Server) BuildMux() *http.ServeMux {
 	// prevent unauthenticated tool invocations if port is exposed.
 	if s.tools != nil {
 		if s.cfg.Gateway.Token != "" {
-			bridgeHandler := mcpbridge.NewBridgeServer(s.tools, "1.0.0", s.msgBus)
+			s.bridgeServer = mcpbridge.NewBridgeServer(s.tools, "1.0.0", s.msgBus)
 			handler := tokenAuthMiddleware(s.cfg.Gateway.Token,
-				bridgeContextMiddleware(s.cfg.Gateway.Token, bridgeHandler))
+				bridgeContextMiddleware(s.cfg.Gateway.Token, s.bridgeServer))
 			mux.Handle("/mcp/bridge", handler)
 		} else {
 			slog.Warn("security.mcp_bridge_disabled: no gateway token configured, MCP bridge is disabled")
 			mux.HandleFunc("/mcp/bridge", func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"error":"mcp bridge disabled: set GOCLAW_GATEWAY_TOKEN to enable"}`))
+				writeGatewayError(w, http.StatusForbidden, "mcp_bridge_disabled",
+					"MCP bridge disabled: set GOCLAW_GATEWAY_TOKEN to enable")
 			})
 		}
+	}
+
+	// Remote bridge: SSE stream of gateway EventFrame JSON (same wire shape as WebSocket pushes).
+	if s.cfg.Gateway.Token != "" {
+		mux.Handle("/v1/bridge/events", tokenAuthMiddleware(s.cfg.Gateway.Token, http.HandlerFunc(s.handleBridgeSSE)))
+	} else {
+		mux.HandleFunc("/v1/bridge/events", func(w http.ResponseWriter, _ *http.Request) {
+			writeGatewayError(w, http.StatusForbidden, "bridge_events_disabled",
+				"bridge events disabled: set GOCLAW_GATEWAY_TOKEN")
+		})
 	}
 
 	// Embedded web UI (built with -tags embedui). Catch-all after all API routes.
@@ -238,8 +258,9 @@ func bridgeContextMiddleware(gatewayToken string, next http.Handler) http.Handle
 			if !ok {
 				slog.Warn("security.mcp_bridge: invalid bridge context signature",
 					"agent_id", agentIDStr, "user_id", userID)
-				http.Error(w, `{"error":"invalid bridge context signature"}`, http.StatusForbidden)
-				return
+		writeGatewayError(w, http.StatusForbidden, "invalid_signature",
+				"invalid bridge context signature")
+			return
 			}
 
 			if agentIDStr != "" {
@@ -285,8 +306,8 @@ func tokenAuthMiddleware(token string, next http.Handler) http.Handler {
 		auth := r.Header.Get("Authorization")
 		provided := strings.TrimPrefix(auth, "Bearer ")
 		if !strings.HasPrefix(auth, "Bearer ") || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-			return
+		writeGatewayError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+		return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -306,6 +327,10 @@ func (s *Server) Start(ctx context.Context) error {
 	s.httpServer = &http.Server{
 		Addr:    addr,
 		Handler: handler,
+	}
+
+	if len(s.cfg.Gateway.AllowedOrigins) == 0 {
+		slog.Warn("security: gateway.allowed_origins is not configured — WebSocket connections from any origin are accepted (CSWSH risk for public deployments)")
 	}
 
 	slog.Info("gateway starting", "addr", addr)
@@ -451,6 +476,11 @@ func (s *Server) SetFeedbackHandler(h *httpapi.FeedbackHandler) {
 	s.handlers = append(s.handlers, h)
 }
 
+// SetSessionForkHandler registers POST /v1/sessions/fork (copy session history to a new key).
+func (s *Server) SetSessionForkHandler(h *httpapi.SessionForkHandler) {
+	s.handlers = append(s.handlers, h)
+}
+
 // SetOAuthHandler sets the OAuth handler (available in all modes).
 func (s *Server) SetOAuthHandler(h *httpapi.OAuthHandler) { s.handlers = append(s.handlers, h) }
 
@@ -466,6 +496,15 @@ func (s *Server) SetTenantsHandler(h *httpapi.TenantsHandler) {
 
 // SetAPIKeyStore sets the API key store for token-based auth lookup.
 func (s *Server) SetAPIKeyStore(st store.APIKeyStore) { s.apiKeyStore = st }
+
+// RefreshMCPBridgeTools rebuilds the MCP bridge's tool list from the current registry.
+// No-op when the bridge is disabled (no gateway token). Call after plugin
+// activate/deactivate to propagate tool registry changes to MCP clients.
+func (s *Server) RefreshMCPBridgeTools() {
+	if s.bridgeServer != nil {
+		s.bridgeServer.RefreshTools()
+	}
+}
 
 // SetFilesHandler sets the workspace file serving handler.
 func (s *Server) SetFilesHandler(h *httpapi.FilesHandler) { s.handlers = append(s.handlers, h) }
@@ -638,9 +677,12 @@ func (s *Server) SetLogTee(lt *LogTee) {
 	s.logTee = lt
 }
 
+// testServerShutdownTimeout is the graceful shutdown window for test servers.
+const testServerShutdownTimeout = 2 * time.Second
+
 // StartTestServer creates a listener on :0 (random port) and returns the
 // actual address and a start function. Used for integration tests.
-func StartTestServer(s *Server, ctx context.Context) (addr string, start func()) {
+func StartTestServer(s *Server, ctx context.Context) (addr string, start func(), err error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/health", s.handleHealth)
@@ -668,7 +710,7 @@ func StartTestServer(s *Server, ctx context.Context) (addr string, start func())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		panic("listen: " + err.Error())
+		return "", nil, fmt.Errorf("test server listen: %w", err)
 	}
 
 	s.httpServer = &http.Server{Handler: mux}
@@ -677,14 +719,14 @@ func StartTestServer(s *Server, ctx context.Context) (addr string, start func())
 	start = func() {
 		go func() {
 			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), testServerShutdownTimeout)
 			defer cancel()
 			s.httpServer.Shutdown(shutdownCtx)
 		}()
 		s.httpServer.Serve(ln)
 	}
 
-	return addr, start
+	return addr, start, nil
 }
 
 // desktopCORS wraps a handler with permissive CORS headers for desktop dev mode.

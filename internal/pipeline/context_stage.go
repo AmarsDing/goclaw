@@ -116,7 +116,7 @@ func (s *ContextStage) Execute(ctx context.Context, state *RunState) error {
 	// pronouns and implicit references in follow-up questions.
 	if s.deps.AutoInject != nil && state.Input.Message != "" {
 		recentCtx := buildRecentContext(state.Messages.History())
-		section, err := s.deps.AutoInject(ctx, state.Input.Message, state.Input.UserID, recentCtx)
+		section, _, err := s.deps.AutoInject(ctx, state.Input.Message, state.Input.UserID, recentCtx)
 		if err == nil && section != "" {
 			state.Context.MemorySection = section
 			sys := state.Messages.System()

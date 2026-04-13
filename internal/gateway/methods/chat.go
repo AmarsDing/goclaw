@@ -214,7 +214,7 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 
 	// Create cancellable context for abort support (matching TS AbortController pattern).
 	runCtx, cancel := context.WithCancel(runCtxBase)
-	injectCh := m.agents.RegisterRun(runID, sessionKey, params.AgentID, cancel)
+	injectCh, interruptCh := m.agents.RegisterRun(runID, sessionKey, params.AgentID, cancel)
 
 	// Run agent asynchronously - events are broadcast via the event system
 	go func() {
@@ -252,15 +252,16 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 		}
 
 		result, err := loop.Run(runCtx, agent.RunRequest{
-			SessionKey: sessionKey,
-			Message:    message,
-			Media:      mediaFiles,
-			Channel:    "ws",
-			ChatID:     userID, // use stable userID for team/workspace isolation (not ephemeral client.ID())
-			RunID:      runID,
-			UserID:     userID,
-			Stream:     params.Stream,
-			InjectCh:   injectCh,
+			SessionKey:  sessionKey,
+			Message:     message,
+			Media:       mediaFiles,
+			Channel:     "ws",
+			ChatID:      userID, // use stable userID for team/workspace isolation (not ephemeral client.ID())
+			RunID:       runID,
+			UserID:      userID,
+			Stream:      params.Stream,
+			InjectCh:    injectCh,
+			InterruptCh: interruptCh,
 		})
 
 		if err != nil {

@@ -229,7 +229,7 @@ func (l *Loop) injectContext(ctx context.Context, req *RunRequest) (contextSetup
 			BaseDir:    l.dataDir,
 		})
 		if wsErr != nil {
-			slog.Warn("workspace resolution failed", "err", wsErr)
+			slog.Warn("workspace resolution failed", "error", wsErr)
 		} else {
 			ctx = workspace.WithContext(ctx, wc)
 		}

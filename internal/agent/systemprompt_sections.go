@@ -72,6 +72,38 @@ func buildMCPToolsInlineSection(descs map[string]string) []string {
 	return lines
 }
 
+// buildMCPServerInstructionsSection generates per-server instruction blocks.
+// Only shown when at least one connected MCP server returned a non-empty
+// instructions field in its initialize response (MCP protocol extension).
+// Placed below the cache boundary so server-level hints don't bust the stable cache.
+func buildMCPServerInstructionsSection(instructions map[string]string) []string {
+	if len(instructions) == 0 {
+		return nil
+	}
+	// Deterministic order for prompt stability.
+	names := make([]string, 0, len(instructions))
+	for name := range instructions {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	lines := []string{
+		"## MCP Server Guidance",
+		"",
+		"The following MCP servers have provided usage instructions:",
+		"",
+	}
+	for _, name := range names {
+		lines = append(lines,
+			fmt.Sprintf("### %s", name),
+			"",
+			instructions[name],
+			"",
+		)
+	}
+	return lines
+}
+
 // buildSafetySlimSection generates a 2-line safety section for task mode.
 // Keeps prompt injection defense — enterprise automation agents process untrusted content.
 func buildSafetySlimSection() []string {

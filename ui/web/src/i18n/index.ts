@@ -40,6 +40,8 @@ import enSystemSettings from "./locales/en/system-settings.json";
 import enImportExport from "./locales/en/import-export.json";
 import enV3Capabilities from "./locales/en/v3-capabilities.json";
 import enBackup from "./locales/en/backup.json";
+import enMarketplace from "./locales/en/marketplace.json";
+import enDreamweaver from "./locales/en/dreamweaver.json";
 
 // --- VI namespaces ---
 import viCommon from "./locales/vi/common.json";
@@ -80,6 +82,8 @@ import viSystemSettings from "./locales/vi/system-settings.json";
 import viImportExport from "./locales/vi/import-export.json";
 import viV3Capabilities from "./locales/vi/v3-capabilities.json";
 import viBackup from "./locales/vi/backup.json";
+import viMarketplace from "./locales/vi/marketplace.json";
+import viDreamweaver from "./locales/vi/dreamweaver.json";
 
 // --- ZH namespaces ---
 import zhCommon from "./locales/zh/common.json";
@@ -120,6 +124,8 @@ import zhSystemSettings from "./locales/zh/system-settings.json";
 import zhImportExport from "./locales/zh/import-export.json";
 import zhV3Capabilities from "./locales/zh/v3-capabilities.json";
 import zhBackup from "./locales/zh/backup.json";
+import zhMarketplace from "./locales/zh/marketplace.json";
+import zhDreamweaver from "./locales/zh/dreamweaver.json";
 
 const STORAGE_KEY = "goclaw:language";
 
@@ -141,6 +147,8 @@ const ns = [
   "cli-credentials", "packages", "tenants", "system-settings", "import-export",
   "v3-capabilities",
   "backup",
+  "marketplace",
+  "dreamweaver",
 ] as const;
 
 i18n.use(initReactI18next).init({
@@ -162,6 +170,8 @@ i18n.use(initReactI18next).init({
       "import-export": enImportExport,
       "v3-capabilities": enV3Capabilities,
       backup: enBackup,
+      marketplace: enMarketplace,
+      dreamweaver: enDreamweaver,
     },
     vi: {
       common: viCommon, sidebar: viSidebar, topbar: viTopbar, login: viLogin,
@@ -180,6 +190,8 @@ i18n.use(initReactI18next).init({
       "import-export": viImportExport,
       "v3-capabilities": viV3Capabilities,
       backup: viBackup,
+      marketplace: viMarketplace,
+      dreamweaver: viDreamweaver,
     },
     zh: {
       common: zhCommon, sidebar: zhSidebar, topbar: zhTopbar, login: zhLogin,
@@ -198,6 +210,8 @@ i18n.use(initReactI18next).init({
       "import-export": zhImportExport,
       "v3-capabilities": zhV3Capabilities,
       backup: zhBackup,
+      marketplace: zhMarketplace,
+      dreamweaver: zhDreamweaver,
     },
   },
   ns: [...ns],

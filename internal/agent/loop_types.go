@@ -143,6 +143,7 @@ type Loop struct {
 	mcpStore        store.MCPServerStore  // for credential lookup
 	mcpPool         *mcpbridge.Pool       // user-keyed connection pool
 	mcpUserCredSrvs []store.MCPAccessInfo // servers needing per-user creds
+	mcpManager      *mcpbridge.Manager    // per-agent MCP manager (DB servers + plugin MCP)
 	mcpUserTools    sync.Map              // userID → []tools.Tool (cached per-user tools)
 
 	// Compaction config (memory flush settings)
@@ -215,6 +216,10 @@ type Loop struct {
 	// Vault hook: called when a text file is persisted from user upload.
 	// Enables vault registration without agent package importing vault.
 	onTextUploaded func(ctx context.Context, path, content string)
+
+	// onToolRegistryChange is called after plugin activate/deactivate so the MCP
+	// bridge (and other consumers) can rebuild their tool snapshots.
+	onToolRegistryChange func()
 
 	// Persistent media storage for cross-turn image/document access
 	mediaStore *media.Store
@@ -400,6 +405,10 @@ type LoopConfig struct {
 	// Vault hook: called asynchronously when a text file is persisted from user upload.
 	OnTextUploaded func(ctx context.Context, path, content string)
 
+	// OnToolRegistryChange is called after a plugin activates or deactivates to let
+	// infrastructure (e.g. MCP bridge) rebuild its tool list. Optional.
+	OnToolRegistryChange func()
+
 	// Persistent media storage for cross-turn image/document access
 	MediaStore *media.Store
 
@@ -417,6 +426,8 @@ type LoopConfig struct {
 	MCPStore        store.MCPServerStore  // for credential lookup
 	MCPPool         *mcpbridge.Pool       // user-keyed connection pool
 	MCPUserCredSrvs []store.MCPAccessInfo // servers needing per-user creds
+	// MCPManager is the per-agent MCP manager used for DB-backed servers and plugin MCP registration (pool Acquire).
+	MCPManager *mcpbridge.Manager
 
 	// V3 orchestration mode (resolved by resolver, controls tool visibility)
 	OrchMode        OrchestrationMode
@@ -535,6 +546,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		teamStore:              cfg.TeamStore,
 		secureCLIStore:         cfg.SecureCLIStore,
 		onTextUploaded:         cfg.OnTextUploaded,
+		onToolRegistryChange:   cfg.OnToolRegistryChange,
 		mediaStore:             cfg.MediaStore,
 		modelPricing:           cfg.ModelPricing,
 		budgetMonthlyCents:     cfg.BudgetMonthlyCents,
@@ -543,6 +555,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		mcpStore:               cfg.MCPStore,
 		mcpPool:                cfg.MCPPool,
 		mcpUserCredSrvs:        cfg.MCPUserCredSrvs,
+		mcpManager:             cfg.MCPManager,
 		orchMode:               cfg.OrchMode,
 		delegateTargets:        cfg.DelegateTargets,
 		evolutionMetricsStore:  cfg.EvolutionMetricsStore,
@@ -595,6 +608,14 @@ type RunRequest struct {
 	// When set, the loop drains this channel at turn boundaries to inject
 	// user follow-up messages into the running conversation.
 	InjectCh <-chan InjectedMessage
+
+	// InterruptCh is an optional soft-interrupt signal channel (capacity 1).
+	// A value is sent by Router.InjectMessage whenever a new user message is
+	// injected while the loop is running. ToolStage listens to this channel
+	// during parallel execution: on signal, only InterruptCancel-group tools
+	// are cancelled; InterruptBlock-group tools run to completion.
+	// The triggering message is already queued in InjectCh for the next turn.
+	InterruptCh <-chan struct{}
 
 	// Delegation context (set when running as a delegate agent)
 	DelegationID  string // delegation ID for event correlation

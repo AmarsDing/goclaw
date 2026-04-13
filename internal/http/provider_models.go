@@ -13,6 +13,9 @@ import (
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
 
+// providerModelsTimeout is the per-request timeout for external provider model-list calls.
+const providerModelsTimeout = 15 * time.Second
+
 // ModelInfo is a normalized model entry returned by the list-models endpoint.
 type ModelInfo struct {
 	ID        string                        `json:"id"`
@@ -70,7 +73,7 @@ func (h *ProvidersHandler) handleListProviderModels(w http.ResponseWriter, r *ht
 	// Ollama: use native /api/tags for richer metadata (parameter size, quantization, family).
 	// ProviderOllama has no API key; ProviderOllamaCloud requires one but both use the same endpoint.
 	if p.ProviderType == store.ProviderOllama || p.ProviderType == store.ProviderOllamaCloud {
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), providerModelsTimeout)
 		defer cancel()
 		apiBase := h.resolveAPIBase(p)
 		if apiBase == "" {
@@ -91,7 +94,7 @@ func (h *ProvidersHandler) handleListProviderModels(w http.ResponseWriter, r *ht
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), providerModelsTimeout)
 	defer cancel()
 
 	var models []ModelInfo

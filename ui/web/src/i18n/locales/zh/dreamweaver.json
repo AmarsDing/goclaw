@@ -1,0 +1,80 @@
+{
+  "title": "织梦坊",
+  "subtitle": "远程桥接、分层配置、工坊入口与精灵（V3）开关。",
+  "tabs": {
+    "bridge": "远程桥接",
+    "layers": "分层配置",
+    "workshop": "工坊",
+    "alchemy": "炼化",
+    "spirit": "精灵（智能体）"
+  },
+  "bridge": {
+    "title": "WebSocket 与 SSE",
+    "desc": "将 SDK 或自动化接到网关事件流。",
+    "ws": "WebSocket（与 UI 同源）：",
+    "sse": "Server-Sent Events（需令牌，与 MCP 桥一致）：",
+    "auth": "若网关要求令牌，SSE 请携带 Authorization: Bearer <gateway token>。"
+  },
+  "layers": {
+    "title": "配置合并顺序",
+    "desc": "织梦坊相关设置按从低到高的优先级合并。",
+    "order": "后者覆盖前者：",
+    "file": "工作区下 .goclaw/dreamweaver.json"
+  },
+  "workshop": {
+    "title": "工坊",
+    "desc": "技能、智能体与市集包。",
+    "openWizard": "打开分步向导",
+    "skills": "技能",
+    "agents": "智能体",
+    "marketplace": "市集"
+  },
+  "alchemy": {
+    "title": "炼化",
+    "desc": "包的构建与发布使用 CLI 及管理端「包」页面。",
+    "cli": "在项目目录使用 goclaw packages 相关命令；发布与校验见文档。",
+    "packages": "包（管理员）"
+  },
+  "spirit": {
+    "title": "精灵设置",
+    "desc": "按智能体配置的 V3 能力开关（流水线、记忆、检索、自进化等）。",
+    "pickAgent": "智能体",
+    "placeholder": "请选择智能体…",
+    "loading": "加载开关中…",
+    "openAgent": "打开智能体详情",
+    "hint": "选择智能体后可查看并切换 V3 开关。"
+  },
+  "wizard": {
+    "title": "工坊向导",
+    "subtitle": "分步：选定目标 → 准备环境 → 跳转技能/智能体 → 发布到市集。",
+    "backToHub": "返回织梦坊",
+    "stepLabel": "第 {{current}} / {{total}} 步",
+    "prev": "上一步",
+    "next": "继续",
+    "goals": {
+      "skill": "技能包",
+      "agent": "智能体定义",
+      "publish": "发布到市集"
+    },
+    "prepare": {
+      "cli": "安装 goclaw CLI；若远程发布请先完成网关鉴权。",
+      "workspace": "在项目目录准备 .goclaw 与合法的 SKILL.md 或 agent JSON。",
+      "token": "使用 Publisher 远程上传或 marketplace push 时配置 GOCLAW_GATEWAY_TOKEN。"
+    },
+    "actions": {
+      "openSkills": "打开技能",
+      "openAgents": "打开智能体",
+      "openMarketplace": "打开市集"
+    },
+    "done": {
+      "hint": "本地校验通过后再用 CLI 发布；市集可浏览与安装包。",
+      "cta": "打开市集"
+    },
+    "steps": {
+      "s1": { "label": "目标", "title": "你要做什么？", "desc": "选择一条路径，完成前可随时返回修改。" },
+      "s2": { "label": "准备", "title": "前置条件", "desc": "创建或上传制品前请确认以下项。" },
+      "s3": { "label": "创建", "title": "前往对应页面", "desc": "在技能或智能体页面创建内容；市集展示已发布包。" },
+      "s4": { "label": "完成", "title": "后续", "desc": "准备好后用 CLI 发布，或浏览市集。" }
+    }
+  }
+}

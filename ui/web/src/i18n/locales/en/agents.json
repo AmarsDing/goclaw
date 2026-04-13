@@ -46,10 +46,26 @@
     "summonFailed": "Failed",
     "resummon": "Resummon",
     "delete": "Delete",
+    "publish": "Publish",
+    "published": "Published",
     "evolving": "Evolving",
     "static": "Static",
     "evolvingTooltip": "Agent can self-evolve its communication style (SOUL.md). Identity and workflow stay fixed.",
     "staticTooltip": "Agent style is static. Enable Self-Evolution in settings to allow style adaptation."
+  },
+  "publishDialog": {
+    "title": "Publish to marketplace",
+    "description": "Package this agent’s configuration and context files. Confirm to upload the bundle and mark the agent as published.",
+    "name": "Listing name",
+    "longDescription": "Description",
+    "version": "Version",
+    "license": "License",
+    "author": "Author",
+    "authorPlaceholder": "Optional — defaults to agent name",
+    "force": "Overwrite if a package with this ID already exists (republish)",
+    "cancel": "Cancel",
+    "confirm": "Publish",
+    "submitting": "Publishing…"
   },
   "v3Info": {
     "title": "What's New in v3",
@@ -1071,6 +1087,8 @@
     "skillGranted": "Skill granted",
     "skillGrantFailed": "Failed to grant skill",
     "skillRevoked": "Skill revoked",
-    "skillRevokeFailed": "Failed to revoke skill"
+    "skillRevokeFailed": "Failed to revoke skill",
+    "published": "Published to marketplace",
+    "publishFailed": "Failed to publish agent"
   }
 }

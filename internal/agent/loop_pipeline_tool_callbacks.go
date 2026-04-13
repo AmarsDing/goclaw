@@ -35,7 +35,8 @@ func (l *Loop) makeExecuteToolCall(req *RunRequest, bridgeRS *runState) func(ctx
 		toolStart := time.Now().UTC()
 		toolSpanID := l.emitToolSpanStart(ctx, toolStart, tc.Name, tc.ID, string(argsJSON))
 
-		result := l.tools.ExecuteWithContext(ctx, registryName, tc.Arguments,
+		execCtx := l.toolExecutionContext(ctx, registryName, tc.Arguments)
+		result := l.tools.ExecuteWithContext(execCtx, registryName, tc.Arguments,
 			req.Channel, req.ChatID, req.PeerKind, req.SessionKey, nil)
 		toolDuration := time.Since(toolStart)
 
@@ -71,7 +72,8 @@ func (l *Loop) makeExecuteToolRaw(req *RunRequest) func(ctx context.Context, tc 
 		start := time.Now().UTC()
 		spanID := l.emitToolSpanStart(ctx, start, tc.Name, tc.ID, string(argsJSON))
 
-		result := l.tools.ExecuteWithContext(ctx, registryName, tc.Arguments,
+		execCtx := l.toolExecutionContext(ctx, registryName, tc.Arguments)
+		result := l.tools.ExecuteWithContext(execCtx, registryName, tc.Arguments,
 			req.Channel, req.ChatID, req.PeerKind, req.SessionKey, nil)
 		dur := time.Since(start)
 
@@ -134,6 +136,20 @@ func (l *Loop) makeCheckReadOnly(req *RunRequest, bridgeRS *runState) func(state
 }
 
 // syncBridgeToState copies side effects from bridgeRS to pipeline RunState.
+// toolExecutionContext applies InterruptBlock vs InterruptCancel for user-cancel propagation.
+// Block tools run under context.WithoutCancel so the run can finish before the next turn.
+func (l *Loop) toolExecutionContext(ctx context.Context, registryName string, args map[string]any) context.Context {
+	reg, ok := l.tools.(*tools.Registry)
+	if !ok || reg == nil {
+		return ctx
+	}
+	name := l.resolveToolCallName(registryName)
+	if reg.InterruptBehaviorFor(name) == tools.InterruptBlock {
+		return context.WithoutCancel(ctx)
+	}
+	return ctx
+}
+
 func syncBridgeToState(bridgeRS *runState, state *pipeline.RunState, action toolResultAction) {
 	state.Tool.LoopKilled = bridgeRS.loopKilled
 	state.Tool.AsyncToolCalls = bridgeRS.asyncToolCalls

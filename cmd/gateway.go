@@ -79,6 +79,10 @@ func runGateway() {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	if err := cfg.Validate(); err != nil {
+		slog.Error("config validation failed", "error", err)
+		os.Exit(1)
+	}
 
 	// Edition override: explicit GOCLAW_EDITION takes precedence over auto-detection.
 	// Auto-detection happens later in setupStoresAndTracing (sqlite → lite).
@@ -177,6 +181,11 @@ func runGateway() {
 		); err == nil && len(sysConfigs) > 0 {
 			cfg.ApplySystemConfigs(sysConfigs)
 			slog.Info("system_configs applied to in-memory config", "keys", len(sysConfigs))
+			// Re-validate after DB overrides are merged in.
+			if err := cfg.Validate(); err != nil {
+				slog.Error("config validation failed after system_configs merge", "error", err)
+				os.Exit(1)
+			}
 		}
 	}
 	setupMemoryEmbeddings(pgStores, providerRegistry)
@@ -284,7 +293,7 @@ func runGateway() {
 	var mcpPool *mcpbridge.Pool
 	var mediaStore *media.Store
 	var postTurn tools.PostTurnProcessor
-	contextFileInterceptor, mcpPool, mediaStore, postTurn = wireExtras(pgStores, agentRouter, providerRegistry, modelReg, msgBus, pgStores.Sessions, toolsReg, toolPE, skillsLoader, hasMemory, traceCollector, workspace, cfg.Gateway.InjectionAction, cfg, sandboxMgr, redisClient, domainBus)
+	contextFileInterceptor, mcpPool, mediaStore, postTurn = wireExtras(pgStores, agentRouter, providerRegistry, modelReg, msgBus, pgStores.Sessions, toolsReg, toolPE, skillsLoader, hasMemory, traceCollector, workspace, cfg.Gateway.InjectionAction, cfg, sandboxMgr, redisClient, domainBus, server.RefreshMCPBridgeTools)
 	if mcpPool != nil {
 		defer mcpPool.Stop()
 	}

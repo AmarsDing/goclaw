@@ -169,7 +169,16 @@ flowchart LR
 - 目录/审核/互动/安装 API 已可在单节点网关上跑通；
 - Web UI 已有只读/安装导向的最小市场页。
 
-**仍未做（与 §1.1–1.2 产品闭环对齐）**：对象存储/独立云托管、租户隔离与正式鉴权模型、审核工作流审计、真实支付/entitlement 服务、README 渲染与购买/试用流程、运营后台、完整 i18n。
+**仍未做（与 §1.1–1.2 产品闭环对齐）**：独立「市场云」控制面二进制、对象存储为必选、完整审核工作流 UI、支付税务合规（Stripe 等 **外接**）、运营后台、完整 i18n。
+
+#### 1.5.1 独立 SaaS 与许可证（当前代码边界）
+
+| 主题 | 说明 |
+|------|------|
+| **独立部署** | 本仓库提供 **可自托管的网关进程** + PostgreSQL（目录/权益/审计）；无单独「市场云」微服务仓库；对象存储为可选（制品上传）。 |
+| **多租户** | HTTP 与 `Package` / 权益行使用 **`tenant_id`**（及 `user_id`）与现有 gateway 会话对齐；搜索与安装在校验租户上下文后执行。 |
+| **许可证 / 权益** | 表 **`marketplace_entitlements`**；**`marketplace.HasEntitlement` / `GrantEntitlement`**；非免费包在 **`POST .../install`** 等路径上拒绝无权益调用（`MARKETPLACE_ENTITLEMENT_REQUIRED`）。定价一致性：**`ValidatePricingModel`**、**`InstallBlockedByPricing`**（`internal/marketplace/pricing_validate.go`）。 |
+| **试用 / 计费外接** | Stripe webhook、试用发放等见 **`internal/http/marketplace_extra.go`**；无内置收单与发票。 |
 
 ### 1.6 其余细化需求（与 1.2–1.3 互补）
 
@@ -263,7 +272,7 @@ flowchart LR
 | 炼化 | 填 Git URL、展示分析结果、下载生成 zip 或一键发市场 | P2 |
 | 通用 | 与现有布局、主题、权限路由一致；[ui/web](../) 规范 | P1 |
 
-本轮在 **`ui/web`** 未新增独立页面；上述为路线图。
+**现状**：**`ui/web`** 已有 **`/marketplace`**、**`/dreamweaver`**（能力面板）、**`/dreamweaver/workshop`**（织梦坊分步向导）等；上表仍列 **炼化独立页 / 更强表单** 等增量路线图项。
 
 ---
 

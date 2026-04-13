@@ -87,21 +87,21 @@ func (s *FinalizeStage) Execute(ctx context.Context, state *RunState) error {
 	pending := state.Messages.FlushPending()
 	if len(pending) > 0 && s.deps.FlushMessages != nil {
 		if err := s.deps.FlushMessages(ctx, state.Input.SessionKey, pending); err != nil {
-			slog.Warn("finalize flush failed", "err", err)
+			slog.Warn("finalize flush failed", "error", err)
 		}
 	}
 
 	// 5. Update session metadata (token usage)
 	if s.deps.UpdateMetadata != nil {
 		if err := s.deps.UpdateMetadata(ctx, state.Input.SessionKey, state.Think.TotalUsage); err != nil {
-			slog.Warn("finalize metadata update failed", "err", err)
+			slog.Warn("finalize metadata update failed", "error", err)
 		}
 	}
 
 	// 6. Bootstrap auto-cleanup
 	if state.Context.HadBootstrap && s.deps.BootstrapCleanup != nil {
 		if err := s.deps.BootstrapCleanup(ctx, state); err != nil {
-			slog.Warn("bootstrap cleanup failed", "err", err)
+			slog.Warn("bootstrap cleanup failed", "error", err)
 		}
 	}
 

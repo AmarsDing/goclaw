@@ -237,28 +237,32 @@ func (r *Router) GetCached(ctx context.Context, agentID string) (Agent, bool) {
 // ActiveRun tracks a running agent invocation so it can be aborted via chat.abort
 // and supports mid-run message injection via InjectCh.
 type ActiveRun struct {
-	RunID      string
-	SessionKey string
-	AgentID    string
-	Cancel     context.CancelFunc
-	StartedAt  time.Time
-	InjectCh   chan InjectedMessage // buffered channel for mid-run user message injection
+	RunID       string
+	SessionKey  string
+	AgentID     string
+	Cancel      context.CancelFunc
+	StartedAt   time.Time
+	InjectCh    chan InjectedMessage // buffered channel for mid-run user message injection
+	InterruptCh chan struct{}        // signals a soft interrupt to the parallel tool batch
 }
 
 // RegisterRun records an active run so it can be aborted later.
-// Returns a receive-only channel for mid-run message injection.
-func (r *Router) RegisterRun(runID, sessionKey, agentID string, cancel context.CancelFunc) <-chan InjectedMessage {
+// Returns a receive-only channel for mid-run message injection and a receive-only
+// interrupt channel that fires whenever InjectMessage is called (soft interrupt signal).
+func (r *Router) RegisterRun(runID, sessionKey, agentID string, cancel context.CancelFunc) (<-chan InjectedMessage, <-chan struct{}) {
 	injectCh := make(chan InjectedMessage, injectBufferSize)
+	interruptCh := make(chan struct{}, 1) // capacity 1: signal is edge-triggered, not level
 	r.activeRuns.Store(runID, &ActiveRun{
-		RunID:      runID,
-		SessionKey: sessionKey,
-		AgentID:    agentID,
-		Cancel:     cancel,
-		StartedAt:  time.Now(),
-		InjectCh:   injectCh,
+		RunID:       runID,
+		SessionKey:  sessionKey,
+		AgentID:     agentID,
+		Cancel:      cancel,
+		StartedAt:   time.Now(),
+		InjectCh:    injectCh,
+		InterruptCh: interruptCh,
 	})
 	r.sessionRuns.Store(sessionKey, runID)
-	return injectCh
+	return injectCh, interruptCh
 }
 
 // UnregisterRun removes a completed/cancelled run from tracking.
@@ -293,6 +297,8 @@ func (r *Router) AbortRun(runID, sessionKey string) bool {
 
 // InjectMessage sends a user message to the running loop for a session.
 // Returns true if the message was accepted, false if no active run or channel full.
+// As a side effect, it signals InterruptCh (non-blocking) so that any in-flight
+// parallel tool batch can soft-interrupt its InterruptCancel-group tools.
 func (r *Router) InjectMessage(sessionKey string, msg InjectedMessage) bool {
 	runIDVal, ok := r.sessionRuns.Load(sessionKey)
 	if !ok {
@@ -305,6 +311,11 @@ func (r *Router) InjectMessage(sessionKey string, msg InjectedMessage) bool {
 	run := runVal.(*ActiveRun)
 	select {
 	case run.InjectCh <- msg:
+		// Signal soft interrupt (non-blocking: drop if already signalled).
+		select {
+		case run.InterruptCh <- struct{}{}:
+		default:
+		}
 		return true
 	default:
 		return false // channel full

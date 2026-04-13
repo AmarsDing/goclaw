@@ -46,12 +46,28 @@
     "summonFailed": "Thất bại",
     "resummon": "Triệu hồi lại",
     "delete": "Xóa",
+    "publish": "Xuất bản",
+    "published": "Đã xuất bản",
     "predefinedTooltip": "Tệp ngữ cảnh dùng chung (SOUL.md, IDENTITY.md, AGENTS.md) với USER.md riêng cho mỗi người dùng.",
     "openTooltip": "Mỗi người dùng có bộ tệp ngữ cảnh riêng đầy đủ.",
     "evolving": "Đang tiến hóa",
     "static": "Tĩnh",
     "evolvingTooltip": "Agent có thể tự tiến hóa phong cách giao tiếp (SOUL.md). Nhận dạng và quy trình làm việc giữ nguyên.",
     "staticTooltip": "Phong cách agent là tĩnh. Bật Tự Tiến Hóa trong cài đặt để cho phép thích nghi phong cách."
+  },
+  "publishDialog": {
+    "title": "Xuất bản lên marketplace",
+    "description": "Đóng gói cấu hình và tệp ngữ cảnh của agent. Xác nhận để tải lên và đánh dấu agent là đã xuất bản.",
+    "name": "Tên hiển thị",
+    "longDescription": "Mô tả",
+    "version": "Phiên bản",
+    "license": "Giấy phép",
+    "author": "Tác giả",
+    "authorPlaceholder": "Tùy chọn — mặc định dùng tên agent",
+    "force": "Ghi đè nếu gói cùng ID đã tồn tại (xuất bản lại)",
+    "cancel": "Hủy",
+    "confirm": "Xuất bản",
+    "submitting": "Đang xuất bản…"
   },
   "v3Info": {
     "title": "Điểm Mới Trong v3",
@@ -1055,6 +1071,8 @@
     "skillGranted": "Đã cấp skill",
     "skillGrantFailed": "Không thể cấp skill",
     "skillRevoked": "Đã thu hồi skill",
-    "skillRevokeFailed": "Không thể thu hồi skill"
+    "skillRevokeFailed": "Không thể thu hồi skill",
+    "published": "Đã xuất bản lên marketplace",
+    "publishFailed": "Không thể xuất bản agent"
   }
 }

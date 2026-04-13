@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
-import { useWs } from "@/hooks/use-ws";
+import { useWs, useHttp } from "@/hooks/use-ws";
+import type { AgentPublishPayload } from "@/pages/agents/agent-publish-dialog";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { Methods } from "@/api/protocol";
 import type { TeamData, TeamMemberData, TeamTaskData, TeamTaskComment, TeamTaskEvent, TeamTaskAttachment, TeamAccessSettings, ScopeEntry } from "@/types/team";
@@ -9,6 +10,7 @@ import { userFriendlyError } from "@/lib/error-utils";
 
 export function useTeams() {
   const ws = useWs();
+  const http = useHttp();
   const connected = useAuthStore((s) => s.connected);
   const [teams, setTeams] = useState<TeamData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,8 +271,29 @@ export function useTeams() {
     [ws],
   );
 
+  const publishTeamToMarketplace = useCallback(
+    async (teamId: string, payload: AgentPublishPayload) => {
+      try {
+        await http.post(`/v1/teams/${teamId}/marketplace/publish`, {
+          name: payload.name,
+          description: payload.description,
+          version: payload.version,
+          license: payload.license,
+          author: payload.author || undefined,
+          force: payload.force,
+        });
+        await load();
+        toast.success(i18next.t("teams:toast.published"), payload.name);
+      } catch (err) {
+        toast.error(i18next.t("teams:toast.publishFailed"), userFriendlyError(err));
+        throw err;
+      }
+    },
+    [http, load],
+  );
+
   return {
-    teams, loading, load, createTeam, deleteTeam, getTeam, getTeamTasks, getTeamScopes,
+    teams, loading, load, createTeam, deleteTeam, publishTeamToMarketplace, getTeam, getTeamTasks, getTeamScopes,
     getTaskDetail, getTaskLight, approveTask, rejectTask, addTaskComment, getTaskComments, getTaskEvents,
     createTask, deleteTask, deleteTasksBulk, assignTask,
     addMember, removeMember, updateTeamSettings,

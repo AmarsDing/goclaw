@@ -1,0 +1,96 @@
+{
+  "title": "Dreamweaver",
+  "subtitle": "Remote bridge, layered config, workshop links, and agent spirit (V3) flags.",
+  "tabs": {
+    "bridge": "Remote bridge",
+    "layers": "Layered config",
+    "workshop": "Workshop",
+    "alchemy": "Alchemy",
+    "spirit": "Spirit (agent)"
+  },
+  "bridge": {
+    "title": "WebSocket & SSE",
+    "desc": "Connect SDK or automation to the gateway event stream.",
+    "ws": "WebSocket (same origin as the UI):",
+    "sse": "Server-Sent Events (token auth, same as MCP bridge):",
+    "auth": "Send Authorization: Bearer <gateway token> for SSE when the gateway requires a token."
+  },
+  "layers": {
+    "title": "Config merge order",
+    "desc": "DreamWeaver and related settings combine from lowest to highest precedence.",
+    "order": "Later layers override earlier ones:",
+    "file": ".goclaw/dreamweaver.json in the workspace"
+  },
+  "workshop": {
+    "title": "Workshop",
+    "desc": "Skills, agents, and marketplace packages.",
+    "openWizard": "Open step-by-step wizard",
+    "skills": "Skills",
+    "agents": "Agents",
+    "marketplace": "Marketplace"
+  },
+  "alchemy": {
+    "title": "Alchemy",
+    "desc": "Package build and publish flows use the CLI and admin packages UI.",
+    "cli": "Use goclaw packages commands from your project; see docs for publish and verify.",
+    "packages": "Packages (admin)"
+  },
+  "spirit": {
+    "title": "Spirit settings",
+    "desc": "Per-agent V3 capability flags (pipeline, memory, retrieval, self-evolution).",
+    "pickAgent": "Agent",
+    "placeholder": "Select an agent…",
+    "loading": "Loading flags…",
+    "openAgent": "Open agent detail",
+    "hint": "Choose an agent to view and toggle V3 flags."
+  },
+  "wizard": {
+    "title": "Workshop wizard",
+    "subtitle": "Step-by-step: choose a goal, prepare your environment, jump to Skills or Agents, then publish to the marketplace.",
+    "backToHub": "Back to Dreamweaver",
+    "stepLabel": "Step {{current}} / {{total}}",
+    "prev": "Back",
+    "next": "Continue",
+    "goals": {
+      "skill": "Skill package",
+      "agent": "Agent definition",
+      "publish": "Publish to marketplace"
+    },
+    "prepare": {
+      "cli": "Install the goclaw CLI and authenticate to your gateway if you use remote publish.",
+      "workspace": "Use a project folder with .goclaw and valid SKILL.md or agent JSON for validation.",
+      "token": "Set GOCLAW_GATEWAY_TOKEN when using Publisher → remote upload or marketplace push."
+    },
+    "actions": {
+      "openSkills": "Open Skills",
+      "openAgents": "Open Agents",
+      "openMarketplace": "Open Marketplace"
+    },
+    "done": {
+      "hint": "Use Marketplace to install packages or publish after your files pass local validation.",
+      "cta": "Open Marketplace"
+    },
+    "steps": {
+      "s1": {
+        "label": "Goal",
+        "title": "What are you building?",
+        "desc": "Pick one path. You can change it before finishing."
+      },
+      "s2": {
+        "label": "Prepare",
+        "title": "Prerequisites",
+        "desc": "Check these before creating or uploading artifacts."
+      },
+      "s3": {
+        "label": "Create",
+        "title": "Go to the right screen",
+        "desc": "Open Skills or Agents to create content; Marketplace lists published packages."
+      },
+      "s4": {
+        "label": "Done",
+        "title": "Next steps",
+        "desc": "Publish with the CLI when ready, or browse the marketplace."
+      }
+    }
+  }
+}

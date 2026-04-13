@@ -232,6 +232,7 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 		HasKnowledgeGraph:      hasKG,
 		HasMemoryExpand:        hasMemoryExpand,
 		MCPToolDescs:           mcpToolDescs,
+		MCPServerInstructions:  l.buildMCPServerInstructions(),
 		ContextFiles:           contextFiles,
 		AgentType:              l.agentType,
 		ExtraPrompt:            extraSystemPrompt,

@@ -74,6 +74,8 @@ type Analyzer struct {
 }
 
 // NewAnalyzer creates a repository analyser.
+// Note: this constructor has no production callers yet — it is scaffolded for
+// the planned alchemy CLI pipeline and is intentionally kept as a placeholder.
 func NewAnalyzer(workDir string) *Analyzer {
 	return &Analyzer{workDir: workDir}
 }

@@ -1,19 +1,22 @@
 import { useTranslation } from "react-i18next";
-import { Users, Trash2 } from "lucide-react";
+import { Users, Trash2, Rocket } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { formatRelativeTime } from "@/lib/format";
 import type { TeamData } from "@/types/team";
+import { readTeamMarketplacePublished } from "./team-marketplace-utils";
 
 interface TeamListRowProps {
   team: TeamData;
   onClick: () => void;
+  onPublish?: () => void;
   onDelete?: () => void;
 }
 
-export function TeamListRow({ team, onClick, onDelete }: TeamListRowProps) {
+export function TeamListRow({ team, onClick, onPublish, onDelete }: TeamListRowProps) {
   const { t } = useTranslation("teams");
+  const marketplacePublished = readTeamMarketplacePublished(team);
   const members = team.members ?? [];
   const memberCount = team.member_count ?? members.length;
 
@@ -83,6 +86,11 @@ export function TeamListRow({ team, onClick, onDelete }: TeamListRowProps) {
       <Badge variant={team.status === "active" ? "success" : "secondary"} className="shrink-0">
         {team.status}
       </Badge>
+      {marketplacePublished && (
+        <Badge variant="secondary" className="hidden shrink-0 border-primary/30 bg-primary/10 text-2xs text-primary sm:inline-flex">
+          {t("card.published")}
+        </Badge>
+      )}
 
       {/* Created date */}
       {team.created_at && (
@@ -91,6 +99,20 @@ export function TeamListRow({ team, onClick, onDelete }: TeamListRowProps) {
         </span>
       )}
 
+      {onPublish && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="shrink-0 text-muted-foreground hover:text-primary"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPublish();
+          }}
+          title={t("card.publish")}
+        >
+          <Rocket className="h-3.5 w-3.5" />
+        </Button>
+      )}
       {/* Delete */}
       {onDelete && (
         <Button

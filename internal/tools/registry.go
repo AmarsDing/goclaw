@@ -164,6 +164,47 @@ func (r *Registry) IsConcurrencySafe(name string) bool {
 	return meta.IsReadOnly() && !meta.HasCapability(CapAsync)
 }
 
+// IsConcurrencySafeWithArgs is the input-aware variant of IsConcurrencySafe.
+// If the tool implements ConcurrencySafeWithArgsTool, its judgment takes precedence
+// over the static marker so that tools like shell/exec can distinguish safe
+// read-only invocations from mutating ones at the argument level.
+// Falls back to IsConcurrencySafe when the tool does not implement the args-aware interface.
+func (r *Registry) IsConcurrencySafeWithArgs(name string, args map[string]any) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tool, ok := r.resolve(name)
+	if !ok || tool == nil {
+		return false
+	}
+	// Prefer input-aware check.
+	if aware, ok := tool.(ConcurrencySafeWithArgsTool); ok {
+		return aware.IsConcurrencySafeWithArgs(args)
+	}
+	// Fallback: static safety marker.
+	if marker, ok := tool.(ConcurrencySafeTool); ok {
+		return marker.IsConcurrencySafe()
+	}
+	meta, ok := r.metadata[name]
+	if !ok {
+		meta = inferMetadata(name)
+	}
+	return meta.IsReadOnly() && !meta.HasCapability(CapAsync)
+}
+
+// InterruptBehaviorFor returns the tool's interrupt policy, defaulting to InterruptCancel.
+func (r *Registry) InterruptBehaviorFor(name string) InterruptBehavior {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	tool, ok := r.resolve(name)
+	if !ok || tool == nil {
+		return InterruptCancel
+	}
+	if ib, ok := tool.(InterruptBehaviorTool); ok {
+		return ib.InterruptBehavior()
+	}
+	return InterruptCancel
+}
+
 // Unregister removes a tool from the registry by name.
 func (r *Registry) Unregister(name string) {
 	r.mu.Lock()

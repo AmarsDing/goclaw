@@ -116,3 +116,100 @@ func (l *Loop) compactMessagesInPlace(ctx context.Context, messages []providers.
 
 	return result
 }
+
+// compressionCompactor implements compression.Compactor for L3/L4 when an LLM provider is available.
+// Leading system messages are kept verbatim; the rest is summarized with compactionSummaryPrompt.
+func (l *Loop) compressionCompactor(ctx context.Context, msgs []providers.Message) ([]providers.Message, error) {
+	if l.provider == nil {
+		return nil, fmt.Errorf("compression compactor: no provider")
+	}
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+
+	sysEnd := 0
+	for sysEnd < len(msgs) && msgs[sysEnd].Role == "system" {
+		sysEnd++
+	}
+	leading := msgs[:sysEnd]
+	rest := msgs[sysEnd:]
+	if len(rest) == 0 {
+		out := make([]providers.Message, len(leading))
+		copy(out, leading)
+		return out, nil
+	}
+
+	var sb strings.Builder
+	for _, m := range leading {
+		content := m.Content
+		if len(content) > 2000 {
+			content = content[:2000] + "\n...(system truncated)"
+		}
+		fmt.Fprintf(&sb, "system: %s\n\n", content)
+	}
+	appendCompactionTranscript(&sb, rest)
+
+	sctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	resp, err := l.provider.Chat(sctx, providers.ChatRequest{
+		Messages: []providers.Message{{
+			Role:    "user",
+			Content: compactionSummaryPrompt + sb.String(),
+		}},
+		Model:   l.model,
+		Options: map[string]any{"max_tokens": 1024, "temperature": 0.3},
+	})
+	if err != nil {
+		slog.Warn("compression_compactor_failed", "agent", l.id, "error", err)
+		return nil, err
+	}
+
+	summaryText := SanitizeAssistantContent(resp.Content)
+	now := time.Now()
+	summary := providers.Message{
+		Role:    "system",
+		Content: "[Summary of earlier conversation]\n" + summaryText,
+		CompactBoundary: &providers.CompactMeta{
+			Level:         "LLM",
+			OriginalCount: len(msgs),
+			CompactedAt:   now,
+		},
+	}
+
+	if len(leading) > 0 {
+		out := make([]providers.Message, 0, len(leading)+1)
+		out = append(out, leading...)
+		out = append(out, summary)
+		return out, nil
+	}
+	return []providers.Message{summary}, nil
+}
+
+func appendCompactionTranscript(sb *strings.Builder, msgs []providers.Message) {
+	for _, m := range msgs {
+		switch m.Role {
+		case "user":
+			fmt.Fprintf(sb, "user: %s\n", m.Content)
+		case "assistant":
+			fmt.Fprintf(sb, "assistant: %s\n", SanitizeAssistantContent(m.Content))
+			if len(m.ToolCalls) > 0 {
+				fmt.Fprintf(sb, "  [tool_calls: %d]\n", len(m.ToolCalls))
+			}
+		case "tool":
+			content := m.Content
+			if len(content) > 2000 {
+				content = content[:2000] + "\n...(truncated)"
+			}
+			fmt.Fprintf(sb, "tool result: %s\n", content)
+		case "system":
+			content := m.Content
+			if len(content) > 1500 {
+				content = content[:1500] + "\n...(truncated)"
+			}
+			fmt.Fprintf(sb, "system: %s\n", content)
+		default:
+			fmt.Fprintf(sb, "%s: %s\n", m.Role, m.Content)
+		}
+	}
+}

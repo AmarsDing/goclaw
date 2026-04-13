@@ -76,6 +76,11 @@ func NewSandboxedReadFileTool(workspace string, restrict bool, mgr sandbox.Manag
 func (t *ReadFileTool) SetSandboxKey(key string) {}
 
 func (t *ReadFileTool) Name() string { return "read_file" }
+
+// InterruptBehavior returns Block so user interrupt does not abort an in-flight read
+// (Claude Code parity for read-only tools that should finish before new input).
+func (t *ReadFileTool) InterruptBehavior() InterruptBehavior { return InterruptBlock }
+
 func (t *ReadFileTool) Description() string {
 	return "Read the contents of a file. For large files, use offset and limit to read specific line ranges."
 }

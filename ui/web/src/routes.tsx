@@ -111,6 +111,12 @@ const MarketplacePage = lazyWithRetry(() =>
 const MarketplaceDetailPage = lazyWithRetry(() =>
   import("@/pages/marketplace/marketplace-detail-page").then((m) => ({ default: m.MarketplaceDetailPage })),
 );
+const DreamweaverPage = lazyWithRetry(() =>
+  import("@/pages/dreamweaver/dreamweaver-page").then((m) => ({ default: m.DreamweaverPage })),
+);
+const DreamweaverWorkshopPage = lazyWithRetry(() =>
+  import("@/pages/dreamweaver/dreamweaver-workshop-page").then((m) => ({ default: m.DreamweaverWorkshopPage })),
+);
 const TenantsAdminPage = lazyWithRetry(() =>
   import("@/pages/tenants-admin/tenants-admin-page").then((m) => ({ default: m.TenantsAdminPage })),
 );
@@ -195,6 +201,8 @@ export function AppRoutes() {
           <Route path={ROUTES.PACKAGES} element={<RequireAdmin><PackagesPage /></RequireAdmin>} />
           <Route path={ROUTES.MARKETPLACE} element={<MarketplacePage />} />
           <Route path={ROUTES.MARKETPLACE_DETAIL} element={<MarketplaceDetailPage />} />
+          <Route path={ROUTES.DREAMWEAVER} element={<DreamweaverPage />} />
+          <Route path={ROUTES.DREAMWEAVER_WORKSHOP} element={<DreamweaverWorkshopPage />} />
           <Route path={ROUTES.TENANTS} element={<RequireCrossTenant><TenantsAdminPage /></RequireCrossTenant>} />
           <Route path={ROUTES.TENANT_DETAIL} element={<RequireCrossTenant><TenantDetailPage /></RequireCrossTenant>} />
 

@@ -86,8 +86,13 @@ var pkgOwnerIDs []string
 
 // InitGatewayToken sets the gateway bearer token for HTTP auth.
 // Must be called once during server startup before handling requests.
+// Logs a warning when no token is configured — all requests will receive
+// full admin access, which is acceptable only for trusted local deployments.
 func InitGatewayToken(token string) {
 	pkgGatewayToken = token
+	if token == "" {
+		slog.Warn("security: GOCLAW_GATEWAY_TOKEN is not set — all HTTP requests receive admin access; set the token for any non-localhost deployment")
+	}
 }
 
 // InitAPIKeyCache initializes the shared API key cache with TTL and pubsub invalidation.

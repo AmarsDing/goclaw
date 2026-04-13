@@ -10,8 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/nextlevelbuilder/goclaw/internal/compression"
+	"github.com/nextlevelbuilder/goclaw/internal/config"
 	"github.com/nextlevelbuilder/goclaw/internal/consolidation"
 	"github.com/nextlevelbuilder/goclaw/internal/hooks"
+	"github.com/nextlevelbuilder/goclaw/internal/plugins"
 	"github.com/nextlevelbuilder/goclaw/internal/providers"
 	"github.com/nextlevelbuilder/goclaw/internal/store"
 )
@@ -190,5 +193,63 @@ func TestApplyToolHookResults_ModifyAndBlock(t *testing.T) {
 	}
 	if reason != "policy denied" {
 		t.Fatalf("block reason = %q, want policy denied", reason)
+	}
+}
+
+func TestMakeCompactMessages_UsesCompressionEngine(t *testing.T) {
+	loop := &Loop{
+		dreamweaverCfg: &config.DreamWeaverConfig{
+			Enabled:            true,
+			CompressionEnabled: true,
+		},
+		compressionEng: compression.NewEngine(compression.Config{
+			ContextWindow:       10,
+			MaxToolResultTokens: 4,
+			SnipRetainCount:     1,
+			Thresholds:          compression.DefaultThresholds(),
+		}, func(msgs []providers.Message) int {
+			total := 0
+			for _, msg := range msgs {
+				total += len([]rune(msg.Content)) / 4
+			}
+			return total
+		}, nil),
+	}
+
+	msgs := []providers.Message{{
+		Role:    "tool",
+		Content: strings.Repeat("x", 200),
+	}}
+	out, err := loop.makeCompactMessages(&RunRequest{})(context.Background(), msgs, "")
+	if err != nil {
+		t.Fatalf("compact messages returned error: %v", err)
+	}
+	if len(out) == 0 || out[0].Content == msgs[0].Content {
+		t.Fatalf("expected compression engine to compact tool output, got %#v", out)
+	}
+}
+
+func TestPluginPlaceholderTool_DelegatesToRegistry(t *testing.T) {
+	tool := pluginPlaceholderTool{
+		name:       "echo",
+		pluginName: "missing-plugin",
+		registry:   plugins.NewRegistry(t.TempDir()),
+	}
+	result := tool.Execute(context.Background(), map[string]any{"input": "hello"})
+	if result == nil || !result.IsError {
+		t.Fatalf("expected error result, got %#v", result)
+	}
+	if !strings.Contains(result.ForLLM, `plugin tool failed: plugin "missing-plugin" not found`) {
+		t.Fatalf("unexpected error message: %q", result.ForLLM)
+	}
+}
+
+func TestSyntheticToolError_escapesReason(t *testing.T) {
+	s := syntheticToolError("permission_denied", "read_file", "x<y&z")
+	if !strings.Contains(s, "&lt;") || !strings.Contains(s, "&amp;") {
+		t.Fatalf("expected HTML-escaped reason, got: %s", s)
+	}
+	if !strings.Contains(s, "<tool_use_error>") {
+		t.Fatal("expected structured wrapper")
 	}
 }

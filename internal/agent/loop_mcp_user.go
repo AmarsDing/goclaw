@@ -13,6 +13,13 @@ import (
 // Tools are cached per-user in mcpUserTools sync.Map and registered in the shared
 // tool registry so ExecuteWithContext can resolve them. On first call for a user,
 // connections are established via pool.AcquireUser() and BridgeTools created.
+//
+// Concurrency safety: mcpUserTools uses copy-on-write semantics — the stored
+// []tools.Tool slice is never mutated in-place after being stored. Reads iterate
+// the returned slice without modification. The sync.Map provides linearisable
+// load/store/delete, so concurrent callers for different users are fully safe;
+// concurrent callers for the same user may race to create tools (both will check
+// IsConnected and re-build the slice), but the final Store is idempotent.
 func (l *Loop) getUserMCPTools(ctx context.Context, userID string) []tools.Tool {
 	if len(l.mcpUserCredSrvs) == 0 || l.mcpPool == nil || l.mcpStore == nil || userID == "" {
 		return nil

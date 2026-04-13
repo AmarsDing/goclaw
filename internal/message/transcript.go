@@ -43,6 +43,11 @@ func (t *Transcript) Replace(msgs []providers.Message, summary string) {
 }
 
 // ToEnvelope wraps the transcript messages in a ViewTranscript envelope.
+//
+// Deprecated: prefer ForAPI, ForUI, or ForResume which apply the appropriate
+// normalization for each view. ToEnvelope returns raw messages without
+// normalization and has no internal callers; it is retained for API
+// compatibility and may be removed in a future release.
 func (t *Transcript) ToEnvelope(runID string) Envelope {
 	return Envelope{
 		Messages: t.Messages,

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
+import { useTranslation } from "react-i18next";
 import { RefreshCw, Download, Star, Heart, PackageCheck, MessageSquarePlus, ArrowRight } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { SearchInput } from "@/components/shared/search-input";
@@ -12,6 +13,7 @@ import { ROUTES } from "@/lib/constants";
 import { useMarketplace, type MarketplacePackage, type MarketplaceReview } from "./hooks/use-marketplace";
 
 export function MarketplacePage() {
+  const { t } = useTranslation("marketplace");
   const [search, setSearch] = useState("");
   const { packages, installedIDs, loading, refresh, installPackage, likePackage, loadReviews, addReview } = useMarketplace(search);
 
@@ -20,12 +22,12 @@ export function MarketplacePage() {
   return (
     <div className="space-y-6 p-4 sm:p-6">
       <PageHeader
-        title="Marketplace"
-        description="Discover marketplace packages, review metadata, and install them into the local runtime."
+        title={t("title")}
+        description={t("subtitle")}
         actions={
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
+            {t("refresh")}
           </Button>
         }
       />
@@ -33,15 +35,15 @@ export function MarketplacePage() {
       <SearchInput
         value={search}
         onChange={setSearch}
-        placeholder="Search packages, descriptions, or authors"
+        placeholder={t("searchPlaceholder")}
         className="max-w-md"
       />
 
       {items.length === 0 ? (
         <EmptyState
           icon={PackageCheck}
-          title={search ? "No matching packages" : "No marketplace packages yet"}
-          description={search ? "Try a different query." : "Upload or import packages to populate the marketplace."}
+          title={search ? t("emptySearch") : t("emptyDefault")}
+          description={search ? t("emptySearchHint") : t("emptyDefaultHint")}
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

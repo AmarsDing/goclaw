@@ -428,6 +428,33 @@ type AgentSpec struct {
 	Identity          *IdentityConfig `json:"identity,omitempty"`
 }
 
+// Validate performs cross-field validation of the loaded configuration.
+// It should be called once after loading, before starting the server.
+// Returns the first validation error found, or nil.
+func (c *Config) Validate() error {
+	if c.Gateway.Port < 1 || c.Gateway.Port > 65535 {
+		return fmt.Errorf("config: gateway.port %d is out of range [1, 65535]", c.Gateway.Port)
+	}
+	if c.Agents.Defaults.MaxToolIterations < 0 {
+		return fmt.Errorf("config: agents.defaults.max_tool_iterations must be >= 0, got %d", c.Agents.Defaults.MaxToolIterations)
+	}
+	if c.Agents.Defaults.MaxToolCalls < 0 {
+		return fmt.Errorf("config: agents.defaults.max_tool_calls must be >= 0, got %d", c.Agents.Defaults.MaxToolCalls)
+	}
+	if sub := c.Agents.Defaults.Subagents; sub != nil {
+		if sub.MaxSpawnDepth < 0 || sub.MaxSpawnDepth > 5 {
+			return fmt.Errorf("config: agents.defaults.subagents.maxSpawnDepth must be in [0, 5], got %d", sub.MaxSpawnDepth)
+		}
+		if sub.MaxChildrenPerAgent < 0 || sub.MaxChildrenPerAgent > 20 {
+			return fmt.Errorf("config: agents.defaults.subagents.maxChildrenPerAgent must be in [0, 20], got %d", sub.MaxChildrenPerAgent)
+		}
+	}
+	if c.Telemetry.Enabled && c.Telemetry.Endpoint == "" {
+		return fmt.Errorf("config: telemetry.endpoint must be set when telemetry.enabled is true")
+	}
+	return nil
+}
+
 // ReplaceFrom copies all data fields from src into c, preserving c's mutex.
 func (c *Config) ReplaceFrom(src *Config) {
 	c.mu.Lock()

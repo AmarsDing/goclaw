@@ -62,15 +62,16 @@ type connParams struct {
 // On reconnect, fullReconnect() updates BOTH: ss.client for healthLoop and
 // ss.clientPtr.Store() for BridgeTools. The old client is closed AFTER the swap.
 type serverState struct {
-	name       string
-	transport  string
-	client     *mcpclient.Client               // direct ref for health checks (single-goroutine access)
-	clientPtr  atomic.Pointer[mcpclient.Client] // shared atomic ref for BridgeTools (multi-goroutine safe)
-	connected  atomic.Bool
-	toolNames  []string // registered tool names in the registry
-	timeoutSec int
-	cancel     context.CancelFunc
-	conn       connParams // connection params for reconnect
+	name         string
+	transport    string
+	instructions string // server-level instructions from MCP initialize response
+	client       *mcpclient.Client               // direct ref for health checks (single-goroutine access)
+	clientPtr    atomic.Pointer[mcpclient.Client] // shared atomic ref for BridgeTools (multi-goroutine safe)
+	connected    atomic.Bool
+	toolNames    []string // registered tool names in the registry
+	timeoutSec   int
+	cancel       context.CancelFunc
+	conn         connParams // connection params for reconnect
 
 	mu              sync.Mutex
 	reconnAttempts  int
@@ -110,6 +111,9 @@ type Manager struct {
 	activatedTools map[string]struct{}     // tracks activated tool names for group:mcp
 	searchMode     bool
 
+	// pluginMCPServers maps plugin name → logical server keys registered via ConnectPluginMCPServers.
+	pluginMCPServers map[string][]string
+
 	// User-credential servers: servers requiring per-user credentials, stored during
 	// LoadForAgent("") for later per-request tool resolution. These servers are NOT
 	// connected at startup — connections are created per-user via pool.AcquireUser().
@@ -144,8 +148,9 @@ func WithPool(p *Pool) ManagerOption {
 // NewManager creates a new MCP Manager.
 func NewManager(registry *tools.Registry, opts ...ManagerOption) *Manager {
 	m := &Manager{
-		servers:  make(map[string]*serverState),
-		registry: registry,
+		servers:          make(map[string]*serverState),
+		registry:         registry,
+		pluginMCPServers: make(map[string][]string),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -571,6 +576,8 @@ func requireUserCreds(settings json.RawMessage) bool {
 	var s struct {
 		RequireUserCredentials bool `json:"require_user_credentials"`
 	}
-	_ = json.Unmarshal(settings, &s)
+	if err := json.Unmarshal(settings, &s); err != nil {
+		slog.Warn("mcp: failed to parse server settings", "error", err)
+	}
 	return s.RequireUserCredentials
 }

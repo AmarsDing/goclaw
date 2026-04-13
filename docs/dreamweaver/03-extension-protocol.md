@@ -18,7 +18,7 @@
 | `bridge.go` | `Bridge`：`Command` / `CommandType`；`OnCommand`；`Subscribe` + `Emit` / `EmitAll`；与 `EventSink` 解耦 |
 | `client.go` | WebSocket `Client`：`On`、`StartRun`、`AbortRun`、`Approve` / `Deny`（需与网关协议对齐后使用） |
 
-**说明**：客户端假定网关推送 JSON 形态 `Event`；实际 RPC 方法名与 payload 以网关实现为准，接入时需对齐 [04-gateway-protocol.md](../04-gateway-protocol.md)。
+**说明**：客户端假定网关推送 JSON 形态 `Event`；实际 RPC 方法名与 payload 以网关实现为准，接入时需对齐 [04-gateway-protocol.md](../04-gateway-protocol.md)。远程 **SSE**（`/v1/bridge/events`）与 **`EventFrame` 字段**见 [sdk-remote-bridge.md](./sdk-remote-bridge.md)。
 
 ## 3. 插件协议 — `internal/plugins/`
 

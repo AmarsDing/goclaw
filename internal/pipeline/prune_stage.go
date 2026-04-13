@@ -1,4 +1,4 @@
-package pipeline
+﻿package pipeline
 
 import (
 	"context"
@@ -73,7 +73,7 @@ func (s *PruneStage) Execute(ctx context.Context, state *RunState) error {
 	// Phase 2: compaction — flush memories first, then compact
 	if !state.Compact.MemoryFlushedThisCycle && s.memoryFlush != nil {
 		if err := s.memoryFlush.Execute(ctx, state); err != nil {
-			slog.Warn("prune: memory flush error", "err", err)
+			slog.Warn("prune: memory flush error", "error", err)
 		}
 		state.Compact.MemoryFlushedThisCycle = true
 	}

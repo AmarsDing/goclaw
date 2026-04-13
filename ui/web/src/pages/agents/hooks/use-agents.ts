@@ -8,6 +8,7 @@ import { toast } from "@/stores/use-toast-store";
 import i18n from "@/i18n";
 import { userFriendlyError } from "@/lib/error-utils";
 import type { AgentData } from "@/types/agent";
+import type { AgentPublishPayload } from "@/pages/agents/agent-publish-dialog";
 
 interface AgentInfoWs {
   id: string;
@@ -113,5 +114,36 @@ export function useAgents() {
     [http],
   );
 
-  return { agents, loading, error, refresh: invalidate, createAgent, updateAgent, deleteAgent, resummonAgent };
+  const publishToMarketplace = useCallback(
+    async (agentId: string, payload: AgentPublishPayload) => {
+      try {
+        await http.post(`/v1/agents/${agentId}/marketplace/publish`, {
+          name: payload.name,
+          description: payload.description,
+          version: payload.version,
+          license: payload.license,
+          author: payload.author || undefined,
+          force: payload.force,
+        });
+        await invalidate();
+        toast.success(i18n.t("agents:toast.published"), payload.name);
+      } catch (err) {
+        toast.error(i18n.t("agents:toast.publishFailed"), userFriendlyError(err));
+        throw err;
+      }
+    },
+    [http, invalidate],
+  );
+
+  return {
+    agents,
+    loading,
+    error,
+    refresh: invalidate,
+    createAgent,
+    updateAgent,
+    deleteAgent,
+    resummonAgent,
+    publishToMarketplace,
+  };
 }

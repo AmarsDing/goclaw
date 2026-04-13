@@ -151,7 +151,7 @@ func (i *Installer) ListInstalled() ([]InstallResult, error) {
 
 	var results []InstallResult
 
-	typeDirs := []PackageType{TypeSkill, TypeAgent, TypeMCP, TypePlugin}
+	typeDirs := []PackageType{TypeSkill, TypeAgent, TypeTeam, TypeMCP, TypePlugin}
 	for _, pt := range typeDirs {
 		dir := filepath.Join(i.dataDir, "packages", string(pt))
 		entries, err := os.ReadDir(dir)

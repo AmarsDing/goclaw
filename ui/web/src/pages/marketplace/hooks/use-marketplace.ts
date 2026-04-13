@@ -13,6 +13,7 @@ export interface MarketplacePackage {
   author: string;
   version: string;
   ref?: string;
+  readme_markdown?: string;
   likes?: number;
   downloads?: number;
   rating?: number;
@@ -22,6 +23,7 @@ export interface MarketplacePackage {
     model?: string;
     price?: number;
     currency?: string;
+    trial_days?: number;
   };
 }
 
@@ -64,10 +66,6 @@ function useMarketplaceActions(search: string) {
   const qc = useQueryClient();
 
   const installPackage = useCallback(async (pkg: MarketplacePackage) => {
-    if (pkg.pricing?.model && pkg.pricing.model !== "free") {
-      toast.error(`Package ${pkg.name} requires entitlement before installation.`);
-      return { ok: false, error: "package requires entitlement" };
-    }
     try {
       const res = await http.post<InstalledMarketplacePackage>(`/v1/marketplace/packages/${pkg.id}/install`, {});
       toast.success(`Installed ${pkg.name}`);
@@ -81,6 +79,38 @@ function useMarketplaceActions(search: string) {
       return { ok: false, error: message };
     }
   }, [http, qc, search]);
+
+  const startTrial = useCallback(
+    async (pkg: MarketplacePackage) => {
+      try {
+        await http.post(`/v1/marketplace/packages/${pkg.id}/trial`, {});
+        toast.success(`Trial started for ${pkg.name}`);
+        qc.invalidateQueries({ queryKey: queryKeys.marketplace.detail(pkg.id) });
+        return { ok: true as const };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message);
+        return { ok: false as const, error: message };
+      }
+    },
+    [http, qc],
+  );
+
+  const purchaseDev = useCallback(
+    async (pkg: MarketplacePackage) => {
+      try {
+        await http.post(`/v1/marketplace/packages/${pkg.id}/purchase`, {});
+        toast.success(`Access granted for ${pkg.name}`);
+        qc.invalidateQueries({ queryKey: queryKeys.marketplace.detail(pkg.id) });
+        return { ok: true as const };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error(message);
+        return { ok: false as const, error: message };
+      }
+    },
+    [http, qc],
+  );
 
   const likePackage = useCallback(async (pkg: MarketplacePackage) => {
     try {
@@ -119,6 +149,8 @@ function useMarketplaceActions(search: string) {
     likePackage,
     loadReviews,
     addReview,
+    startTrial,
+    purchaseDev,
   };
 }
 

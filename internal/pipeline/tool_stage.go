@@ -10,6 +10,8 @@ import (
 
 // ToolStage runs per iteration after PruneStage. Executes tool calls from
 // ThinkState.LastResponse, checks exit conditions (loop kill, read-only streak, budget).
+// User-cancel vs tool completion is handled by the agent adapter via ToolInterruptBehavior
+// (InterruptBlock → WithoutCancel execution context).
 type ToolStage struct {
 	deps   *PipelineDeps
 	result StageResult
@@ -92,7 +94,7 @@ func (s *ToolStage) executePartitioned(ctx context.Context, state *RunState, too
 	}
 
 	for _, tc := range toolCalls {
-		if s.isParallelSafe(tc.Name) {
+		if s.isParallelSafe(tc.Name, tc.Arguments) {
 			parallelBatch = append(parallelBatch, tc)
 			continue
 		}
@@ -126,6 +128,11 @@ func (s *ToolStage) executePartitioned(ctx context.Context, state *RunState, too
 }
 
 // executeParallel runs tool I/O concurrently, then processes results sequentially.
+// Soft-interrupt support: when InterruptCh fires (user injected a new message),
+// only InterruptCancel-group tools are cancelled via a per-batch derived context;
+// InterruptBlock-group tools use context.WithoutCancel and run to completion.
+// The triggering message is already queued in InjectCh and will be processed by
+// ObserveStage at the next turn boundary.
 func (s *ToolStage) executeParallel(ctx context.Context, state *RunState, toolCalls []providers.ToolCall) error {
 	type rawResult struct {
 		tc      providers.ToolCall
@@ -134,14 +141,36 @@ func (s *ToolStage) executeParallel(ctx context.Context, state *RunState, toolCa
 		err     error
 	}
 
-	// Phase 1: parallel I/O (no state mutation)
+	// batchCtx is the context for the InterruptCancel group in this parallel batch.
+	// It is derived from ctx so it inherits hard cancellation (AbortRun), but can
+	// also be cancelled independently by a soft interrupt from InterruptCh.
+	batchCtx, cancelBatch := context.WithCancel(ctx)
+	defer cancelBatch()
+
+	// Monitor InterruptCh: a soft interrupt signals only the cancel-group.
+	// The goroutine exits when batchCtx is done (either by interrupt or by the
+	// outer ctx being cancelled — both result in cancelBatch being called).
+	if s.deps.InterruptCh != nil {
+		go func() {
+			select {
+			case <-s.deps.InterruptCh:
+				cancelBatch()
+			case <-batchCtx.Done():
+			}
+		}()
+	}
+
+	// Phase 1: parallel I/O (no state mutation).
+	// Each goroutine receives batchCtx; ExecuteToolRaw applies toolExecutionContext
+	// internally: InterruptBlock tools get context.WithoutCancel(batchCtx) and are
+	// unaffected by cancelBatch(); InterruptCancel tools inherit batchCtx directly.
 	results := make([]rawResult, len(toolCalls))
 	var wg sync.WaitGroup
 	for i, tc := range toolCalls {
 		wg.Add(1)
 		go func(idx int, tc providers.ToolCall) {
 			defer wg.Done()
-			msg, rawData, err := s.deps.ExecuteToolRaw(ctx, tc)
+			msg, rawData, err := s.deps.ExecuteToolRaw(batchCtx, tc)
 			results[idx] = rawResult{tc: tc, msg: msg, rawData: rawData, err: err}
 		}(i, tc)
 	}
@@ -167,11 +196,11 @@ func (s *ToolStage) executeParallel(ctx context.Context, state *RunState, toolCa
 	return nil
 }
 
-func (s *ToolStage) isParallelSafe(toolName string) bool {
+func (s *ToolStage) isParallelSafe(toolName string, args map[string]any) bool {
 	if s.deps.ToolConcurrencySafe == nil {
 		return false
 	}
-	return s.deps.ToolConcurrencySafe(toolName)
+	return s.deps.ToolConcurrencySafe(toolName, args)
 }
 
 // checkExitConditions checks read-only streak and tool budget.

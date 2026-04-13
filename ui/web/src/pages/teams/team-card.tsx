@@ -1,14 +1,16 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Users, Trash2, Bot, Crown } from "lucide-react";
+import { Users, Trash2, Bot, Crown, Rocket } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime } from "@/lib/format";
 import type { TeamData, TeamMemberData } from "@/types/team";
+import { readTeamMarketplacePublished } from "./team-marketplace-utils";
 
 interface TeamCardProps {
   team: TeamData;
   onClick: () => void;
+  onPublish?: () => void;
   onDelete?: () => void;
 }
 
@@ -40,8 +42,9 @@ function MemberChip({ member, isLead }: { member: TeamMemberData; isLead: boolea
   );
 }
 
-export function TeamCard({ team, onClick, onDelete }: TeamCardProps) {
+export function TeamCard({ team, onClick, onPublish, onDelete }: TeamCardProps) {
   const { t } = useTranslation("teams");
+  const marketplacePublished = readTeamMarketplacePublished(team);
   const members = team.members ?? [];
   const memberCount = team.member_count ?? members.length;
 
@@ -79,6 +82,11 @@ export function TeamCard({ team, onClick, onDelete }: TeamCardProps) {
         <Badge variant={team.status === "active" ? "success" : "secondary"} className="shrink-0">
           {team.status}
         </Badge>
+        {marketplacePublished && (
+          <Badge variant="secondary" className="shrink-0 border-primary/30 bg-primary/10 text-2xs text-primary">
+            {t("card.published")}
+          </Badge>
+        )}
       </div>
 
       {/* Description */}
@@ -102,13 +110,27 @@ export function TeamCard({ team, onClick, onDelete }: TeamCardProps) {
         </div>
       )}
 
-      {/* Bottom: time + delete */}
+      {/* Bottom: time + publish + delete */}
       <div className="flex items-center gap-1.5">
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex items-center gap-0.5">
           {team.created_at && (
             <span className="text-xs-plus text-muted-foreground">
               {formatRelativeTime(team.created_at)}
             </span>
+          )}
+          {onPublish && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground hover:text-primary"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPublish();
+              }}
+            >
+              <Rocket className="h-3.5 w-3.5" />
+              {t("card.publish")}
+            </Button>
           )}
           {onDelete && (
             <Button

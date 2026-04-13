@@ -4,11 +4,18 @@ import (
 	"embed"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 )
 
 //go:embed templates/*.md
 var templateFS embed.FS
+
+// embeddedTemplatePath returns the embed.FS key for a template; must use "/" (not filepath)
+// so reads work on Windows (embed rejects backslashes).
+func embeddedTemplatePath(name string) string {
+	return path.Join("templates", name)
+}
 
 // templateFiles lists the templates to seed, in order.
 // BOOTSTRAP.md is handled separately (only seeded for brand-new workspaces).
@@ -25,7 +32,7 @@ var templateFiles = []string{
 
 // ReadTemplate returns the content of an embedded template file.
 func ReadTemplate(name string) (string, error) {
-	content, err := templateFS.ReadFile(filepath.Join("templates", name))
+	content, err := templateFS.ReadFile(embeddedTemplatePath(name))
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +95,7 @@ func seedTemplate(workspaceDir, name string) (bool, error) {
 	defer f.Close()
 
 	// Read embedded template
-	content, err := templateFS.ReadFile(filepath.Join("templates", name))
+	content, err := templateFS.ReadFile(embeddedTemplatePath(name))
 	if err != nil {
 		os.Remove(dstPath) // clean up empty file
 		return false, err

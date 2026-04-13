@@ -20,6 +20,7 @@ export function useV3Flags(agentId: string) {
     queryKey: queryKeys.v3Flags.detail(agentId),
     queryFn: () => http.get<V3Flags>(`/v1/agents/${agentId}/v3-flags`),
     staleTime: 60_000,
+    enabled: Boolean(agentId),
   });
 
   const toggleFlag = useCallback(

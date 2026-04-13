@@ -109,7 +109,7 @@ func (h *AgentsHandler) handleTeamExport(w http.ResponseWriter, r *http.Request)
 		tmpPath := tmpFile.Name()
 
 		progressFn := func(ev ProgressEvent) { sendSSE(w, flusher, "progress", ev) }
-		buildErr := h.writeTeamExportArchive(r.Context(), tmpFile, teamID, teamMeta, progressFn)
+		buildErr := h.writeTeamExportArchive(r.Context(), tmpFile, teamID, teamMeta, progressFn, maxExportSize)
 		tmpFile.Close()
 
 		if buildErr != nil {
@@ -129,14 +129,15 @@ func (h *AgentsHandler) handleTeamExport(w http.ResponseWriter, r *http.Request)
 	// Direct streaming response
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
-	if err := h.writeTeamExportArchive(r.Context(), w, teamID, teamMeta, nil); err != nil {
+	if err := h.writeTeamExportArchive(r.Context(), w, teamID, teamMeta, nil, maxExportSize); err != nil {
 		slog.Error("team.export.direct", "team_id", teamID, "error", err)
 	}
 }
 
 // writeTeamExportArchive builds the team tar.gz archive: team/ metadata + agents/{key}/ per member.
-func (h *AgentsHandler) writeTeamExportArchive(ctx context.Context, w io.Writer, teamID uuid.UUID, teamMeta *pg.TeamExport, progressFn func(ProgressEvent)) error {
-	lw := &limitedWriter{w: w, limit: maxExportSize}
+// maxBytes caps total compressed output (same semantics as agent export).
+func (h *AgentsHandler) writeTeamExportArchive(ctx context.Context, w io.Writer, teamID uuid.UUID, teamMeta *pg.TeamExport, progressFn func(ProgressEvent), maxBytes int64) error {
+	lw := &limitedWriter{w: w, limit: maxBytes}
 	gw := gzip.NewWriter(lw)
 	tw := tar.NewWriter(gw)
 
